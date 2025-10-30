@@ -14,7 +14,7 @@ if not SERP_API_KEY:
     st.warning("⚠️ Missing SERPAPI_KEY. Add it to your Streamlit secrets.")
     st.stop()
 
-# Bay Area tax rates by city
+# Bay Area city tax rates
 BAY_AREA_TAX = {
     "San Francisco": 9.5,
     "Oakland": 10.25,
@@ -25,10 +25,9 @@ BAY_AREA_TAX = {
     "Mountain View": 9.125,
     "Santa Clara": 9.125,
     "Daly City": 9.875,
-    "All Bay Area": 9.5
 }
 
-# Coordinates for main cities (for map)
+# Coordinates for map centers
 CITY_COORDS = {
     "San Francisco": [37.7749, -122.4194],
     "Oakland": [37.8044, -122.2712],
@@ -38,7 +37,7 @@ CITY_COORDS = {
     "Fremont": [37.5483, -121.9886],
     "Mountain View": [37.3861, -122.0839],
     "Santa Clara": [37.3541, -121.9552],
-    "Daly City": [37.6879, -122.4702]
+    "Daly City": [37.6879, -122.4702],
 }
 
 LOCAL_STORES = [
@@ -51,31 +50,31 @@ LOCAL_STORES = [
 # ----------------------------
 # HEADER
 # ----------------------------
-st.title("🛒 hellaCheap — Real Bay Area Prices")
-st.caption("Find real Bay Area prices — from SF corner stores to big-box retailers. ✨")
+st.title("🛒 hellaCheap — Bay Area Price Finder")
+st.caption("Find real prices across San Francisco & Bay Area stores — from local gems to national chains.")
 
-st.info("Results come from public listings via SerpAPI. Some stores may repeat — often because of bundles, sellers, or stock differences. Only the lowest price per store is shown.")
+st.info("💡 Some stores may repeat due to bundles, stock, or multiple sellers. Only the **lowest price per store** is shown.")
 
 # ----------------------------
-# INPUTS
+# USER INPUT
 # ----------------------------
 col1, col2 = st.columns([1.2, 1])
 with col1:
-    city = st.selectbox("Select your Bay Area city:", list(BAY_AREA_TAX.keys()))
+    city = st.selectbox("📍 Choose a Bay Area city:", list(BAY_AREA_TAX.keys()))
 with col2:
-    query = st.text_input("Search for a product (e.g., AirPods Pro, oat milk, PS5):", "")
+    query = st.text_input("🔍 Search for a product (e.g. AirPods, oat milk, PS5):", "")
 
 if st.button("Search"):
     if not query.strip():
         st.warning("Please enter a product name to search.")
         st.stop()
 
-    st.subheader(f"💰 All Bay Area Prices (including tax)")
+    st.subheader(f"💰 Prices around {city}")
     tax_rate = BAY_AREA_TAX.get(city, 9.5)
-    st.caption(f"Tax rate applied: {tax_rate}%")
+    st.caption(f"Sales tax in {city}: **{tax_rate}%**")
 
     # ----------------------------
-    # SERP API CALL
+    # FETCH DATA
     # ----------------------------
     params = {
         "engine": "google_shopping",
@@ -103,7 +102,7 @@ if st.button("Search"):
         except:
             continue
 
-        # Only keep lowest price per store
+        # Keep only lowest price per store
         if source not in seen_stores or price < seen_stores[source]["price"]:
             seen_stores[source] = {
                 "title": title,
@@ -119,7 +118,7 @@ if st.button("Search"):
     ]
 
     if not results:
-        st.warning("No results found. Try a more specific product name.")
+        st.warning("No results found. Try refining your search.")
         st.stop()
 
     # ----------------------------
@@ -129,26 +128,25 @@ if st.button("Search"):
         with st.container():
             cols = st.columns([1, 3])
             with cols[0]:
-                st.image(r["thumbnail"], width=180)
+                st.image(r["thumbnail"], width=160)
             with cols[1]:
                 st.markdown(f"### **{r['title']}**")
                 st.markdown(f"**{r['store']}** — ${r['price']:.2f}")
-                st.markdown(f"**Total after tax:** ${r['price_with_tax']:.2f}")
-                st.markdown(f"[🔗 View on {r['store']}]({r['link']})")
+                st.markdown(f"💵 **With tax:** ${r['price_with_tax']:.2f}")
+                st.markdown(f"[🛍️ View on {r['store']}]({r['link']})")
 
     # ----------------------------
-    # DATA TABLE
+    # TABLE VIEW
     # ----------------------------
     df = pd.DataFrame(results)
-    st.subheader("📊 Data Table")
-    st.dataframe(df[["store", "title", "price", "price_with_tax", "tax_rate", "domain", "link"]])
+    st.subheader("📊 Compare All Stores")
+    st.dataframe(df[["store", "title", "price", "price_with_tax", "tax_rate", "link"]])
 
     # ----------------------------
     # CLICKABLE MAP
     # ----------------------------
-    st.subheader("🗺️ Local Stores Map (Clickable)")
+    st.subheader("🗺️ Bay Area Store Locations")
 
-    # Generate map links
     def store_to_map_url(store):
         query = urllib.parse.quote_plus(f"{store}, {city}, California")
         return f"https://www.google.com/maps/search/?api=1&query={query}"
@@ -164,13 +162,12 @@ if st.button("Search"):
         for s, r in seen_stores.items()
     ])
 
-    # Display clickable map with tooltips
     st.pydeck_chart(
         pdk.Deck(
             map_style="mapbox://styles/mapbox/light-v9",
             initial_view_state=pdk.ViewState(
-                latitude=37.7749,
-                longitude=-122.4194,
+                latitude=CITY_COORDS.get(city, [37.7749, -122.4194])[0],
+                longitude=CITY_COORDS.get(city, [37.7749, -122.4194])[1],
                 zoom=10,
                 pitch=0,
             ),
@@ -179,13 +176,14 @@ if st.button("Search"):
                     "ScatterplotLayer",
                     data=map_data,
                     get_position='[lon, lat]',
-                    get_fill_color='[255, 100, 100, 180]',
+                    get_fill_color='[255, 80, 80, 200]',
                     get_radius=500,
                     pickable=True,
                 )
             ],
             tooltip={
-                "html": "<b>{store}</b><br/>Price: ${price}<br/><a href='{url}' target='_blank'>📍 Open in Maps</a>",
+                "html": "<b>{store}</b><br/>Price: ${price}<br/><a href='{url}' target='_blank'>📍 Open in Maps – "
+                        + city + "</a>",
                 "style": {"backgroundColor": "white", "color": "black"}
             }
         )
@@ -195,4 +193,4 @@ if st.button("Search"):
 # FOOTER
 # ----------------------------
 st.markdown("---")
-st.caption("Built with ❤️ in the Bay by hellaCheap — powered by Streamlit + SerpAPI + local love 🌉")
+st.caption("Built with ❤️ in the Bay by hellaCheap — powered by Streamlit, SerpAPI & local love 🌉")
