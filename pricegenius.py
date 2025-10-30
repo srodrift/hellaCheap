@@ -18,25 +18,13 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ---- USER INPUTS ----
-product_name = st.text_input("Enter a product name (e.g. AirPods Pro 2):")
-filter_terms_input = st.text_input(
-    "Optional: must include these words (comma-separated, e.g. San Francisco, 2024, paperback):"
-)
-
-# Convert filters into a list
-filter_terms = [term.strip().lower() for term in filter_terms_input.split(",") if term.strip()]
+# ---- SEARCH BOX ----
+product_name = st.text_input("Enter a product name (e.g. AirPods Pro 2 or San Francisco Passport Holder):")
 
 # ---- FUNCTION TO FETCH PRICES ----
-def fetch_prices(main_term, filters):
-    # Combine filters into search query
-    if filters:
-        search_query = f"{main_term} " + " ".join(filters)
-    else:
-        search_query = main_term
-
+def fetch_prices(query):
     url = "https://serpapi.com/search.json"
-    params = {"engine": "google_shopping", "q": search_query, "api_key": SERPAPI_KEY}
+    params = {"engine": "google_shopping", "q": query, "api_key": SERPAPI_KEY}
     response = requests.get(url, params=params)
     data = response.json()
 
@@ -60,11 +48,7 @@ def fetch_prices(main_term, filters):
                 continue
 
             if not link or not link.startswith("http"):
-                link = f"https://www.google.com/search?q={search_query.replace(' ', '+')}+buy"
-
-            # Local secondary filter check
-            if filters and not all(term in title.lower() for term in filters):
-                continue
+                link = f"https://www.google.com/search?q={query.replace(' ', '+')}+buy"
 
             # Keep only lowest per store
             if store not in seen_stores or price < seen_stores[store]["price"]:
@@ -84,10 +68,10 @@ def fetch_prices(main_term, filters):
 # ---- DISPLAY RESULTS ----
 if product_name:
     st.subheader("💰 Price Results")
-    prices = fetch_prices(product_name, filter_terms)
+    prices = fetch_prices(product_name)
 
     if not prices:
-        st.warning("No prices found matching your query. Try adjusting or simplifying filters.")
+        st.warning("No prices found. Try a broader or simpler search term.")
     else:
         df = pd.DataFrame(prices)
         for _, row in df.iterrows():
