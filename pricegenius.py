@@ -18,7 +18,9 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-query = st.text_input("Enter a product name (e.g. AirPods Pro 2):")
+# ---- USER INPUTS ----
+product_name = st.text_input("Enter a product name (e.g. AirPods Pro 2):")
+filter_term = st.text_input("Optional: must include this word in title (e.g. San Francisco):")
 
 # ---- FUNCTION TO FETCH PRICES ----
 def fetch_prices(product_name):
@@ -36,22 +38,26 @@ def fetch_prices(product_name):
             price_str = item.get("price")
             link = item.get("link")
             thumbnail = item.get("thumbnail")
-            title = item.get("title")
+            title = item.get("title") or ""
 
             if not price_str:
                 continue
 
-            # Clean and parse price
+            # Parse price
             try:
                 price = float("".join(ch for ch in price_str if ch.isdigit() or ch == "."))
             except:
                 continue
 
-            # Fix missing or relative links
+            # Fallback link
             if not link or not link.startswith("http"):
                 link = f"https://www.google.com/search?q={product_name.replace(' ', '+')}+buy"
 
-            # Keep only the lowest price per store
+            # Apply user filter
+            if filter_term and filter_term.lower() not in title.lower():
+                continue
+
+            # Keep only lowest per store
             if store not in seen_stores or price < seen_stores[store]["price"]:
                 seen_stores[store] = {
                     "store": store,
@@ -65,13 +71,14 @@ def fetch_prices(product_name):
 
     return prices
 
+
 # ---- DISPLAY RESULTS ----
-if query:
+if product_name:
     st.subheader("💰 Price Results")
-    prices = fetch_prices(query)
+    prices = fetch_prices(product_name)
 
     if not prices:
-        st.warning("No prices found. Try another product name.")
+        st.warning("No prices found matching your query. Try adjusting the filter.")
     else:
         df = pd.DataFrame(prices)
         for _, row in df.iterrows():
@@ -98,8 +105,8 @@ if query:
             f"""
             <div style="background-color:#e8fce8; padding:12px; border-radius:10px;">
             The best deal is from <b>{best['store']}</b> at 
-            <span style="color:green;">${best['price']:.2f}</span>!
-            <a href="{best['link']}" target="_blank"> Buy from here</a> for the best price. 🛍️
+            <span style="color:green;">${best['price']:.2f}</span>! 
+            <a href="{best['link']}" target="_blank">Buy from here</a> for the best price. 🛍️
             </div>
             """,
             unsafe_allow_html=True
