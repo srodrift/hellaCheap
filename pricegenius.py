@@ -3,24 +3,27 @@ import requests
 import pandas as pd
 
 # ---- CONFIG ----
-SERPAPI_KEY = "c13a5777ffd1fb6787bd1a2f33d01eb38102d0a7d673f8d6ac10ba093c275e04"  # your key
+SERPAPI_KEY = "c13a5777ffd1fb6787bd1a2f33d01eb38102d0a7d673f8d6ac10ba093c275e04"
 
 st.set_page_config(page_title="PricePilot", page_icon="🛫", layout="centered")
 
 # ---- HEADER ----
-st.title("🛫 PricePilot")
-st.caption("Compare live prices across BestBuy, Walmart, eBay, and more — powered by AI.")
+st.markdown(
+    """
+    <h1 style='text-align: center;'>🛫 <b>PricePilot</b></h1>
+    <p style='text-align: center; color: gray;'>
+    Compare live prices across BestBuy, Walmart, eBay, and more — powered by AI.
+    </p>
+    """,
+    unsafe_allow_html=True
+)
 
 query = st.text_input("Enter a product name (e.g. AirPods Pro 2):")
 
 # ---- FUNCTION TO FETCH PRICES ----
 def fetch_prices(product_name):
     url = "https://serpapi.com/search.json"
-    params = {
-        "engine": "google_shopping",
-        "q": product_name,
-        "api_key": SERPAPI_KEY
-    }
+    params = {"engine": "google_shopping", "q": product_name, "api_key": SERPAPI_KEY}
     response = requests.get(url, params=params)
     data = response.json()
 
@@ -35,18 +38,20 @@ def fetch_prices(product_name):
             thumbnail = item.get("thumbnail")
             title = item.get("title")
 
-            # Skip if no price
             if not price_str:
                 continue
 
-            # Convert to float
-            price = None
+            # Clean and parse price
             try:
                 price = float("".join(ch for ch in price_str if ch.isdigit() or ch == "."))
             except:
                 continue
 
-            # Keep only lowest price per store
+            # Fix missing or relative links
+            if not link or not link.startswith("http"):
+                link = f"https://www.google.com/search?q={product_name.replace(' ', '+')}+buy"
+
+            # Keep only the lowest price per store
             if store not in seen_stores or price < seen_stores[store]["price"]:
                 seen_stores[store] = {
                     "store": store,
@@ -75,19 +80,29 @@ if query:
                 if row["thumbnail"]:
                     st.image(row["thumbnail"], width=80)
             with col2:
-                store_link = row["link"] if row["link"] else "#"
                 st.markdown(
-                    f"**{row['store']}** — ${row['price']:.2f}  🌐 [View Product]({store_link})  \n{row['title']}",
+                    f"""
+                    <div style="margin-bottom: 12px;">
+                        <b>{row['store']}</b> — <span style="color:green;">${row['price']:.2f}</span>
+                        <a href="{row['link']}" target="_blank" style="margin-left:10px;">🌐 View Product</a><br>
+                        <span style="font-size:14px; color:gray;">{row['title']}</span>
+                    </div>
+                    """,
                     unsafe_allow_html=True
                 )
 
-        # ---- RECOMMENDATION ----
+        # ---- AI-LIKE RECOMMENDATION ----
         best = min(prices, key=lambda x: x["price"])
         st.markdown("### 🧠 AI Recommendation")
-        st.success(
-            f"The best deal is from **{best['store']}** at **${best['price']:.2f}**! "
-            f"Buy from [here]({best['link']}) for the best price. 🛍️"
+        st.markdown(
+            f"""
+            <div style="background-color:#e8fce8; padding:12px; border-radius:10px;">
+            The best deal is from <b>{best['store']}</b> at 
+            <span style="color:green;">${best['price']:.2f}</span>!
+            <a href="{best['link']}" target="_blank"> Buy from here</a> for the best price. 🛍️
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
-st.markdown("---")
-st.caption("Built with ❤️ by Team PricePilot — powered by Streamlit and SerpAPI")
+st.markdown("<hr><center>Built with ❤️ by Team PricePilot — powered by Streamlit & SerpAPI</center>", unsafe_allow_html=True)
