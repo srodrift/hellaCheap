@@ -1,6 +1,5 @@
 import os
 import requests
-import pandas as pd
 import streamlit as st
 from openai import OpenAI
 
@@ -90,13 +89,14 @@ if product:
         prices = fetch_prices(product)
 
     if prices:
-        st.subheader("💰 Price Results")
-        df = pd.DataFrame(prices)
-        # clickable product links
-        df["link"] = df["link"].apply(lambda x: f"[View Product]({x})")
-        st.dataframe(df, use_container_width=True)
+        st.markdown("### 💰 Price Results")
+        for p in prices:
+            st.markdown(
+                f"- **{p['store']}** — **${p['price']}** "
+                f"[🔗 View Product]({p['link']})"
+            )
 
-        st.subheader("🧠 AI Recommendation")
+        st.markdown("### 🧠 AI Recommendation")
         with st.spinner("Analyzing best deal..."):
             analysis = analyze_prices(prices)
         st.success(analysis)
