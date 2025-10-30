@@ -1,4 +1,5 @@
 streamlit
+openai
 requests
 pandas
-google-search-results
+python-dotenv
