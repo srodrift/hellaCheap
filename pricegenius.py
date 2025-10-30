@@ -2,6 +2,7 @@ import os
 import requests
 import streamlit as st
 from openai import OpenAI
+from urllib.parse import urlparse
 
 # --------------------------
 # 🌍 Load API keys
@@ -19,6 +20,13 @@ client = OpenAI(api_key=OPENAI_KEY)
 # --------------------------
 # 🔍 Fetch Prices from SerpAPI
 # --------------------------
+def clean_link(url, product):
+    """Clean or replace bad Google redirect links."""
+    if not url or "google.com" in url:
+        # fallback to a readable search query
+        return f"https://www.google.com/search?q={product.replace(' ', '+')}"
+    return url
+
 def fetch_prices(product):
     url = f"https://serpapi.com/search.json?q={product}&engine=google_shopping&api_key={SERPAPI_KEY}"
     response = requests.get(url)
@@ -28,22 +36,16 @@ def fetch_prices(product):
     for item in data.get("shopping_results", [])[:5]:
         store = item.get("source") or item.get("merchant") or "Unknown Store"
         price = item.get("extracted_price")
+        link = item.get("link") or item.get("product_link") or item.get("product_page_url")
 
-        # 🧼 Fix ugly Google redirect URLs
-        link = (
-            item.get("link")
-            or item.get("product_link")
-            or item.get("product_page_url")
-        )
-        if link and link.startswith("https://www.google.com/"):
-            link = None
-        if not link:
-            link = f"https://www.google.com/search?q={product.replace(' ', '+')}"
-
+        link = clean_link(link, product)
         if price:
+            # extract domain for nicer link label
+            domain = urlparse(link).netloc.replace("www.", "")
             results.append({
                 "store": store,
                 "price": round(float(price), 2),
+                "domain": domain,
                 "link": link
             })
     return results
@@ -93,7 +95,7 @@ if product:
         for p in prices:
             st.markdown(
                 f"- **{p['store']}** — **${p['price']}** "
-                f"[🔗 View Product]({p['link']})"
+                f"[🌐 {p['domain']}]({p['link']})"
             )
 
         st.markdown("### 🧠 AI Recommendation")
