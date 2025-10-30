@@ -2,115 +2,134 @@ import os
 import requests
 import streamlit as st
 from openai import OpenAI
-from urllib.parse import urlparse
+from dotenv import load_dotenv
+import pandas as pd
 
-# --------------------------
-# 🌍 Load API keys
-# --------------------------
+# Load environment variables
+load_dotenv()
+
+# Keys
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
-if not SERPAPI_KEY:
-    st.error("⚠️ Missing SERPAPI_KEY environment variable.")
-if not OPENAI_KEY:
-    st.error("⚠️ Missing OPENAI_API_KEY environment variable.")
-
 client = OpenAI(api_key=OPENAI_KEY)
 
-# --------------------------
-# 🔍 Fetch Prices from SerpAPI
-# --------------------------
+# Page setup
+st.set_page_config(page_title="PricePilot", page_icon="🛫", layout="centered")
+
+st.markdown(
+    """
+    <h1 style='text-align:center; font-size:42px;'>🛫 PricePilot</h1>
+    <p style='text-align:center; color:gray;'>
+        Compare live prices across BestBuy, Walmart, and Google Shopping — powered by AI.
+    </p>
+    """,
+    unsafe_allow_html=True
+)
+
+# --- Function: Fetch prices ---
 def fetch_prices(product):
-    url = f"https://serpapi.com/search.json?q={product}&engine=google_shopping&api_key={SERPAPI_KEY}"
-    response = requests.get(url)
+    if not SERPAPI_KEY:
+        st.error("❌ Missing SERPAPI_KEY. Please set it in Streamlit Secrets.")
+        return []
+
+    url = "https://serpapi.com/search.json"
+    params = {
+        "engine": "google_shopping",
+        "q": product,
+        "api_key": SERPAPI_KEY,
+        "hl": "en",
+        "gl": "us",
+        "num": 10,
+    }
+
+    response = requests.get(url, params=params)
     data = response.json()
-
     results = []
-    for item in data.get("shopping_results", [])[:5]:
-        store = item.get("source") or item.get("merchant") or "Unknown Store"
-        price = item.get("extracted_price")
-        link = item.get("link")
-        if not link or "google.com" in link:
-            # try to extract real domain from store name
-            domain_guess = store.lower().replace(" ", "") + ".com"
-            link = f"https://{domain_guess}"
 
-        if price:
-            domain = urlparse(link).netloc.replace("www.", "")
+    if "shopping_results" in data:
+        for r in data["shopping_results"][:5]:
+            link = r.get("link", "")
+            domain = link.split("/")[2].replace("www.", "") if link else "unknown"
             results.append({
-                "store": store,
-                "price": round(float(price), 2),
-                "domain": domain,
-                "link": link
+                "store": r.get("source", domain),
+                "price": r.get("price"),
+                "link": f"https://{domain}" if domain else "N/A"
             })
     return results
 
-
-# --------------------------
-# 🤖 Analyze Prices using GPT
-# --------------------------
+# --- Function: Analyze prices with OpenAI ---
 def analyze_prices(prices):
     if not prices:
-        return "No prices found. Try another product."
+        return "No price data available."
 
+    table = "\n".join([f"{p['store']}: ${p['price']}" for p in prices])
     summary_prompt = (
-        "You are a helpful shopping assistant. Here is a list of prices:\n\n"
-        + "\n".join([f"{p['store']}: ${p['price']}" for p in prices])
-        + "\n\nWhich is the best deal? "
-          "Suggest whether the user should buy online or in-store. "
-          "Keep the response short and friendly."
+        f"Here are product prices:\n{table}\n\n"
+        "Which store offers the best deal, and why? Write the answer in 2 sentences, "
+        "friendly and clear, ending with an emoji."
     )
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": summary_prompt}]
+            messages=[{"role": "user", "content": summary_prompt}],
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        return f"⚠️ AI analysis unavailable ({e})"
+        return f"⚠️ AI analysis unavailable ({str(e)})"
 
-
-# --------------------------
-# 💻 Streamlit UI
-# --------------------------
-st.set_page_config(page_title="PricePilot", page_icon="🛫")
-
-st.title("🛫 PricePilot")
-st.caption("Compare live prices across BestBuy, Walmart, and Google Shopping — powered by AI.")
-
+# --- UI Input ---
 product = st.text_input("Enter a product name (e.g. AirPods Pro 2):")
 
 if product:
-    with st.spinner("🔍 Fetching live prices..."):
+    with st.spinner("🔍 Searching the web for the best deals..."):
         prices = fetch_prices(product)
 
     if prices:
-        st.markdown("### 💰 Price Results")
-        for p in prices:
+        # --- Display Prices ---
+        st.markdown(
+            "<h3 style='color:#f5b400; font-weight:800;'>💰 Price Results</h3>",
+            unsafe_allow_html=True,
+        )
+
+        for item in prices:
             st.markdown(
-                f"- **{p['store']}** — **${p['price']}** "
-                f"[🌐 {p['domain']}]({p['link']})"
+                f"""
+                <div style='background-color:#f9f9f9; border-radius:10px; padding:10px; margin:6px 0;'>
+                    <b style='font-size:18px;'>{item['store']}</b> —
+                    <span style='color:#16a34a; font-weight:bold;'>${item['price']}</span>
+                    <a href='{item['link']}' target='_blank' style='text-decoration:none; color:#2563eb;'>🌐 {item['link'].split('//')[1]}</a>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
-        st.markdown("### 🧠 AI Recommendation")
-        with st.spinner("Analyzing best deal..."):
-            analysis = analyze_prices(prices)
-        st.success(analysis)
-    else:
-        st.warning("No results found for that product. Try again!")
+        # --- AI Recommendation ---
+        analysis = analyze_prices(prices)
+        st.markdown(
+            """
+            <div style='margin-top:25px; background-color:#f0fdf4; border-left:5px solid #22c55e;
+                        padding:15px; border-radius:10px;'>
+                <h4 style='color:#047857; margin-bottom:10px;'>🧠 AI Recommendation</h4>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown(f"<p style='font-size:16px;'>{analysis}</p>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-# --------------------------
-# 🧾 Footer
-# --------------------------
-st.markdown("---")
+    else:
+        st.warning("No prices found. Try another product name!")
+
+# --- Footer ---
 st.markdown(
     """
-    <div style='text-align: center; color: grey;'>
-        Built with ❤️ by <b>SunnysideUp</b> · 
-        <a href="https://github.com/srodrift/pricepilot" target="_blank">View on GitHub</a> · 
-        Powered by <b>OpenAI</b> & <b>SerpAPI</b>
-    </div>
+    <hr>
+    <center>
+        <p style='color:gray; font-size:13px;'>
+            Built with ❤️ by Team PricePilot — powered by Streamlit, SerpAPI, and OpenAI
+        </p>
+    </center>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
