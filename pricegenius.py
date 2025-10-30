@@ -1,81 +1,97 @@
 import os
-import json
 import requests
 import streamlit as st
-import pandas as pd
 from openai import OpenAI
+import pandas as pd
 
-# --- API Keys ---
+# --- Initialize API Keys ---
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # --- Initialize OpenAI client ---
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# --- Streamlit app setup ---
-st.set_page_config(page_title="PricePilot", page_icon="🛫")
+# --- Streamlit UI setup ---
+st.set_page_config(page_title="PricePilot", page_icon="🛫", layout="centered")
 st.title("🛫 PricePilot")
-st.write("Compare live prices across BestBuy, Walmart, and Google Shopping.")
+st.caption("Compare live prices across BestBuy, Walmart, and Google Shopping.")
 
-# --- Function to fetch prices from SerpAPI ---
+# --- Fetch prices function ---
 def fetch_prices(product):
     if not SERPAPI_KEY:
-        st.error("❌ Missing SERPAPI_KEY. Please add it in Streamlit secrets.")
+        st.error("Missing SERPAPI_KEY environment variable.")
         return []
+    
     url = f"https://serpapi.com/search.json?q={product}&engine=google_shopping&api_key={SERPAPI_KEY}"
-    r = requests.get(url)
-    data = r.json()
+    response = requests.get(url)
+    data = response.json()
     results = []
+
     for item in data.get("shopping_results", [])[:5]:
         results.append({
+            "Product": item.get("title"),
             "Store": item.get("source"),
             "Price ($)": item.get("extracted_price"),
-            "Link": item.get("link")
+            "Link": item.get("link") or f"https://www.google.com/search?q={product}"
         })
+
     return results
 
-# --- Function to analyze prices using OpenAI ---
+# --- AI analysis function ---
 def analyze_prices(prices):
-    if not OPENAI_API_KEY:
-        return "❌ Missing OPENAI_API_KEY. Please add it in Streamlit secrets."
+    if not prices:
+        return "No prices found to analyze."
 
-    summary_prompt = f"""
-    You are a shopping analyst. Given this list of store prices, find the cheapest option and
-    explain in plain English which store provides the best value and why.
-    {json.dumps(prices, indent=2)}
-    """
+    summary_prompt = (
+        "You are a smart shopping assistant. Given the following list of prices, "
+        "identify which store offers the best deal, and give a short recommendation.\n\n"
+        f"{prices}\n\n"
+        "Return your response in a friendly, concise tone."
+    )
+
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": summary_prompt}],
         )
-        return response.choices[0].message.content
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        return f"⚠️ AI analysis unavailable ({str(e)[:100]}...)"
+        return f"⚠️ AI analysis unavailable: {str(e)}"
 
-# --- UI Input ---
+# --- UI Interaction ---
 product = st.text_input("Enter a product name (e.g. AirPods Pro 2):")
 
-if st.button("🔍 Search"):
-    if not product:
-        st.warning("Please enter a product name.")
+if product:
+    with st.spinner("Fetching live prices..."):
+        prices = fetch_prices(product)
+
+    if prices:
+        # Display DataFrame with clickable links
+        df = pd.DataFrame(prices)
+        st.subheader("💰 Price Results")
+        def make_clickable(val):
+            return f'<a href="{val}" target="_blank">🔗 Link</a>'
+        df["Link"] = df["Link"].apply(make_clickable)
+        st.write(df.to_html(escape=False, index=False), unsafe_allow_html=True)
+
+        # 🏆 Highlight best deal
+        best_deal = min(prices, key=lambda x: x["Price ($)"] or float("inf"))
+        st.markdown(
+            f"""
+            <div style="background-color:#d1fae5;padding:15px;border-radius:10px;margin-top:20px;">
+                <h4>🏆 Best Deal: {best_deal['Store']}</h4>
+                <b>{best_deal['Product']}</b><br>
+                💵 ${best_deal['Price ($)']}<br>
+                <a href="{best_deal['Link']}" target="_blank">View on store →</a>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # AI recommendation
+        with st.spinner("Analyzing deals..."):
+            analysis = analyze_prices(prices)
+        st.subheader("🧠 AI Recommendation")
+        st.write(analysis)
     else:
-        with st.spinner("Fetching live prices..."):
-            prices = fetch_prices(product)
-
-        if prices:
-            df = pd.DataFrame(prices)
-            st.subheader("💰 Price Results")
-            st.dataframe(df, use_container_width=True)
-
-            with st.spinner("Analyzing best deal with AI..."):
-                analysis = analyze_prices(prices)
-
-            st.subheader("🧠 AI Recommendation")
-            st.markdown(f"✅ **{analysis}**")
-        else:
-            st.error("No results found. Try another product name.")
-
-# --- Footer ---
-st.markdown("---")
-st.caption("Built with ❤️ using SerpAPI + OpenAI + Streamlit by @srodrift")
+        st.warning("No results found.")
