@@ -1,189 +1,130 @@
 import os
 import requests
 import streamlit as st
-from urllib.parse import urlparse, quote_plus
 from openai import OpenAI
-from dotenv import load_dotenv
+from serpapi import GoogleSearch
 
-# -------------------- Setup --------------------
-load_dotenv()
+# --- Load API Keys ---
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
-OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-client = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
+if not SERPAPI_KEY:
+    st.error("❌ Missing SERPAPI_KEY in environment variables.")
+if not OPENAI_API_KEY:
+    st.error("❌ Missing OPENAI_API_KEY in environment variables.")
 
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# --- Streamlit UI ---
 st.set_page_config(page_title="PricePilot", page_icon="🛫", layout="centered")
-st.markdown("""
-    <h1 style='text-align:center;font-size:42px;margin-bottom:0;'>🛫 PricePilot</h1>
-    <p style='text-align:center;color:gray;margin-top:0;'>
-        Compare live prices across BestBuy, Walmart, and Google Shopping — powered by AI.
-    </p>
-""", unsafe_allow_html=True)
+st.title("🛫 PricePilot")
+st.caption("Compare live prices across Amazon, Walmart, Best Buy, and more — powered by AI.")
 
-# -------------------- Helpers --------------------
-def safe_domain(link: str | None) -> str:
-    """Return pretty domain (e.g., bestbuy.com) or 'N/A'."""
-    if not link:
-        return "N/A"
-    try:
-        netloc = urlparse(link).netloc
-        return netloc.replace("www.", "") or "N/A"
-    except Exception:
-        return "N/A"
-
-def best_link(item: dict, query: str) -> str | None:
-    """
-    Pick the best outbound link available from a SerpAPI Shopping item.
-    We try 'link' → 'product_link' → 'product_page_url'.
-    If nothing exists, we return a Google search link for the item title + store.
-    """
-    for key in ("link", "product_link", "product_page_url"):
-        val = item.get(key)
-        if isinstance(val, str) and val.startswith(("http://", "https://")):
-            return val
-
-    # Fallback: Google search link
-    title = item.get("title") or query
-    store = item.get("source") or ""
-    search_q = quote_plus(f"{title} {store}".strip())
-    return f"https://www.google.com/search?q={search_q}"
-
-def price_number(item: dict):
-    """Return a numeric price if possible, otherwise None."""
-    p = item.get("extracted_price")
-    if p is None:
-        raw = item.get("price")
-        if isinstance(raw, (int, float)):
-            p = float(raw)
-        elif isinstance(raw, str):
-            digits = "".join(ch for ch in raw if ch.isdigit() or ch == ".")
-            p = float(digits) if digits else None
-    return p
-
-# -------------------- Fetch --------------------
-def fetch_prices(product: str) -> list[dict]:
-    if not SERPAPI_KEY:
-        st.error("❌ Missing SERPAPI_KEY in environment.")
-        return []
-
-    url = "https://serpapi.com/search.json"
-    params = {
-        "engine": "google_shopping",
-        "q": product,
-        "api_key": SERPAPI_KEY,
-        "hl": "en",
-        "gl": "us",
-        "num": 10,
-    }
-
-    r = requests.get(url, params=params, timeout=30)
-    r.raise_for_status()
-    data = r.json()
-
-    out: list[dict] = []
-    for it in data.get("shopping_results", [])[:8]:
-        price = price_number(it)
-        if price is None:
-            continue  # skip items without a usable price
-
-        link = best_link(it, product)
-        out.append({
-            "title": it.get("title", "Unknown Product"),
-            "store": it.get("source", "Unknown Store"),
-            "price": round(float(price), 2),
-            "link": link,
-            "domain": safe_domain(link),
-            "image": it.get("thumbnail") or it.get("image") or "",
-        })
-    return out
-
-# -------------------- AI --------------------
-def analyze_prices(prices: list[dict]) -> str:
-    if not prices:
-        return "No price data available."
-    if not client:
-        return "AI is not configured on this deployment."
-
-    table = "\n".join([f"{p['store']}: ${p['price']}" for p in prices])
-    prompt = (
-        "Here are prices for the same product across stores:\n"
-        f"{table}\n\n"
-        "Which option is the best deal and why? Keep it under 3 sentences, friendly tone, end with an emoji."
-    )
-    try:
-        res = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return res.choices[0].message.content.strip()
-    except Exception as e:
-        return f"⚠️ AI unavailable ({e})"
-
-# -------------------- UI --------------------
 product = st.text_input("Enter a product name (e.g. AirPods Pro 2):")
 
-if product.strip():
-    with st.spinner("🔍 Searching for best deals..."):
-        items = fetch_prices(product.strip())
+# --- Helper: Normalize store names ---
+def clean_store_name(name):
+    if not name:
+        return "Unknown"
+    name = name.lower()
+    if "ebay" in name:
+        return "eBay"
+    if "walmart" in name:
+        return "Walmart"
+    if "best" in name and "buy" in name:
+        return "Best Buy"
+    if "apple" in name:
+        return "Apple"
+    if "amazon" in name:
+        return "Amazon"
+    return name.title()
 
-    if items:
-        st.markdown("<h3 style='color:#f5b400;'>💰 Price Results</h3>", unsafe_allow_html=True)
+# --- Fetch prices ---
+def fetch_prices(product_name):
+    params = {
+        "engine": "google_shopping",
+        "q": product_name,
+        "api_key": SERPAPI_KEY,
+        "num": 30
+    }
+    search = GoogleSearch(params)
+    results = search.get_dict()
+    items = results.get("shopping_results", [])
+    if not items:
+        return []
 
-        # Highlight the cheapest item (optional)
-        cheapest = min(items, key=lambda x: x["price"])["price"]
+    store_prices = {}
+    for item in items:
+        title = item.get("title", "")
+        link = item.get("link", "")
+        source = clean_store_name(item.get("source", "Unknown"))
+        thumbnail = item.get("thumbnail", "")
+        price_str = item.get("price", "$0").replace("$", "").replace(",", "")
 
-        for p in items:
-            is_best = p["price"] == cheapest
-            border = "#22c55e" if is_best else "#e5e7eb"
-            badge = (
-                "<span style='background:#dcfce7;color:#166534;padding:2px 8px;"
-                "font-size:12px;border-radius:999px;margin-left:8px;'>Best deal</span>"
-                if is_best else ""
-            )
+        try:
+            price = float(price_str)
+        except ValueError:
+            continue
 
-            # Build link HTML only when valid
-            link_html = (
-                f"<a href='{p['link']}' target='_blank' "
-                f"style='color:#2563eb;text-decoration:none;'>🌐 {p['domain']}</a>"
-                if p['link'] and p['link'].startswith(('http://', 'https://'))
-                else "<span style='color:#6b7280;'>No link</span>"
-            )
+        # Keep only the lowest price per store
+        if source not in store_prices or price < store_prices[source]["price"]:
+            store_prices[source] = {
+                "title": title,
+                "price": price,
+                "link": link,
+                "thumbnail": thumbnail
+            }
 
-            st.markdown(
-                f"""
-                <div style="display:flex;align-items:center;gap:14px;
-                            background-color:#fafafa;border-radius:12px;
-                            padding:14px 16px;margin:12px 0;
-                            border:1px solid {border};">
-                    <img src="{p['image']}" width="60" style="border-radius:8px;" />
-                    <div>
-                        <b>{p['store']}</b> — <span style="color:#16a34a;font-weight:700;">${p['price']}</span>
-                        {badge}<br>
-                        {link_html}<br>
-                        <span style="font-size:13px;color:#555;">{p['title']}</span>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    return store_prices
 
-        # AI Recommendation
-        st.markdown(
-            "<div style='background-color:#f0fdf4;border-left:6px solid #22c55e;"
-            "padding:15px;border-radius:10px;margin-top:20px;'>"
-            "<h4 style='margin-bottom:10px;color:#047857;'>🧠 AI Recommendation</h4>",
-            unsafe_allow_html=True,
+# --- Analyze prices ---
+def analyze_prices(prices):
+    if not prices:
+        return "No prices found."
+
+    prompt = "Compare the following product prices and recommend the best value:\n\n"
+    for store, data in prices.items():
+        prompt += f"{store}: ${data['price']}\n"
+    prompt += "\nReturn a short, friendly summary with your recommendation."
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}]
         )
-        st.markdown(f"<p style='font-size:16px;'>{analyze_prices(items)}</p>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-    else:
-        st.warning("No results found — try a more specific name.")
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"⚠️ AI analysis unavailable ({e})"
 
-st.markdown("""
----
-<center>
-<p style='color:gray;font-size:13px;'>
-Built with ❤️ by Sunny — PricePilot is powered by Streamlit, SerpAPI, and OpenAI
-</p>
-</center>
-""", unsafe_allow_html=True)
+# --- Display results ---
+if product:
+    with st.spinner("Fetching live prices..."):
+        prices = fetch_prices(product)
+
+    if prices:
+        # Sort by price (ascending)
+        sorted_prices = dict(sorted(prices.items(), key=lambda x: x[1]['price']))
+
+        st.subheader("💰 Price Results")
+        for store, data in sorted_prices.items():
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                if data["thumbnail"]:
+                    st.image(data["thumbnail"], width=100)
+                else:
+                    st.write("🖼️ N/A")
+            with col2:
+                st.markdown(f"**{store}** — **${data['price']:.2f}**")
+                if data["link"]:
+                    st.markdown(f"[🌐 View Product]({data['link']})")
+                else:
+                    st.markdown("No link available")
+                st.caption(data["title"])
+
+        st.subheader("🧠 AI Recommendation")
+        st.write(analyze_prices(prices))
+    else:
+        st.warning("No results found. Try another product name.")
+
+st.markdown("---")
+st.caption("Built with ❤️ by Team PricePilot — powered by Streamlit, SerpAPI, and OpenAI.")
