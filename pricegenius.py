@@ -28,9 +28,15 @@ filter_terms_input = st.text_input(
 filter_terms = [term.strip().lower() for term in filter_terms_input.split(",") if term.strip()]
 
 # ---- FUNCTION TO FETCH PRICES ----
-def fetch_prices(product_name):
+def fetch_prices(main_term, filters):
+    # Combine filters into search query
+    if filters:
+        search_query = f"{main_term} " + " ".join(filters)
+    else:
+        search_query = main_term
+
     url = "https://serpapi.com/search.json"
-    params = {"engine": "google_shopping", "q": product_name, "api_key": SERPAPI_KEY}
+    params = {"engine": "google_shopping", "q": search_query, "api_key": SERPAPI_KEY}
     response = requests.get(url, params=params)
     data = response.json()
 
@@ -53,12 +59,11 @@ def fetch_prices(product_name):
             except:
                 continue
 
-            # Fallback link
             if not link or not link.startswith("http"):
-                link = f"https://www.google.com/search?q={product_name.replace(' ', '+')}+buy"
+                link = f"https://www.google.com/search?q={search_query.replace(' ', '+')}+buy"
 
-            # Apply multiple filter terms
-            if filter_terms and not all(term in title.lower() for term in filter_terms):
+            # Local secondary filter check
+            if filters and not all(term in title.lower() for term in filters):
                 continue
 
             # Keep only lowest per store
@@ -79,10 +84,10 @@ def fetch_prices(product_name):
 # ---- DISPLAY RESULTS ----
 if product_name:
     st.subheader("💰 Price Results")
-    prices = fetch_prices(product_name)
+    prices = fetch_prices(product_name, filter_terms)
 
     if not prices:
-        st.warning("No prices found matching your query. Try adjusting the filters.")
+        st.warning("No prices found matching your query. Try adjusting or simplifying filters.")
     else:
         df = pd.DataFrame(prices)
         for _, row in df.iterrows():
