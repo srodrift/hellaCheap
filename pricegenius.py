@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import pydeck as pdk
+import urllib.parse
 
 # ----------------------------
 # CONFIG
@@ -27,7 +28,7 @@ BAY_AREA_TAX = {
     "All Bay Area": 9.5
 }
 
-# Approximate coordinates for main cities (for map plotting)
+# Coordinates for main cities (for map)
 CITY_COORDS = {
     "San Francisco": [37.7749, -122.4194],
     "Oakland": [37.8044, -122.2712],
@@ -133,7 +134,7 @@ if st.button("Search"):
                 st.markdown(f"### **{r['title']}**")
                 st.markdown(f"**{r['store']}** — ${r['price']:.2f}")
                 st.markdown(f"**Total after tax:** ${r['price_with_tax']:.2f}")
-                st.markdown(f"[🔗 View product on {r['store']}]({r['link']})")
+                st.markdown(f"[🔗 View on {r['store']}]({r['link']})")
 
     # ----------------------------
     # DATA TABLE
@@ -143,36 +144,52 @@ if st.button("Search"):
     st.dataframe(df[["store", "title", "price", "price_with_tax", "tax_rate", "domain", "link"]])
 
     # ----------------------------
-    # MAP
+    # CLICKABLE MAP
     # ----------------------------
-    st.subheader("🗺️ Local Stores Map (Bay Area)")
+    st.subheader("🗺️ Local Stores Map (Clickable)")
+
+    # Generate map links
+    def store_to_map_url(store):
+        query = urllib.parse.quote_plus(f"{store}, {city}, California")
+        return f"https://www.google.com/maps/search/?api=1&query={query}"
 
     map_data = pd.DataFrame([
-        {"store": s, "price": r["price"], "lat": CITY_COORDS.get(city, [37.7749, -122.4194])[0],
-         "lon": CITY_COORDS.get(city, [37.7749, -122.4194])[1]}
+        {
+            "store": s,
+            "price": r["price"],
+            "lat": CITY_COORDS.get(city, [37.7749, -122.4194])[0],
+            "lon": CITY_COORDS.get(city, [37.7749, -122.4194])[1],
+            "url": store_to_map_url(s)
+        }
         for s, r in seen_stores.items()
     ])
 
-    st.pydeck_chart(pdk.Deck(
-        map_style="mapbox://styles/mapbox/light-v9",
-        initial_view_state=pdk.ViewState(
-            latitude=37.7749,
-            longitude=-122.4194,
-            zoom=10,
-            pitch=0,
-        ),
-        layers=[
-            pdk.Layer(
-                "ScatterplotLayer",
-                data=map_data,
-                get_position='[lon, lat]',
-                get_fill_color='[255, 100, 100, 180]',
-                get_radius=500,
-                pickable=True,
-            )
-        ],
-        tooltip={"text": "{store}\nPrice: ${price}"}
-    ))
+    # Display clickable map with tooltips
+    st.pydeck_chart(
+        pdk.Deck(
+            map_style="mapbox://styles/mapbox/light-v9",
+            initial_view_state=pdk.ViewState(
+                latitude=37.7749,
+                longitude=-122.4194,
+                zoom=10,
+                pitch=0,
+            ),
+            layers=[
+                pdk.Layer(
+                    "ScatterplotLayer",
+                    data=map_data,
+                    get_position='[lon, lat]',
+                    get_fill_color='[255, 100, 100, 180]',
+                    get_radius=500,
+                    pickable=True,
+                )
+            ],
+            tooltip={
+                "html": "<b>{store}</b><br/>Price: ${price}<br/><a href='{url}' target='_blank'>📍 Open in Maps</a>",
+                "style": {"backgroundColor": "white", "color": "black"}
+            }
+        )
+    )
 
 # ----------------------------
 # FOOTER
