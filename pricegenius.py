@@ -16,7 +16,7 @@ client = OpenAI(api_key=OPENAI_KEY)
 # --- SF Tax Rate ---
 TAX_RATE = 0.09625  # 9.625%
 
-# --- San Francisco Store Directory (hyperlocal) ---
+# --- San Francisco Store Directory ---
 LOCAL_STORES = {
     # --- Major Chains ---
     "Trader Joe's - SOMA": "555 9th St, San Francisco, CA 94103 (SoMa)",
@@ -38,52 +38,39 @@ LOCAL_STORES = {
     "Bi-Rite Market - Divisadero": "550 Divisadero St, San Francisco, CA 94117 (Alamo Square)",
     "Bi-Rite Market - 18th St": "3639 18th St, San Francisco, CA 94110 (Mission)",
     "Bi-Rite Market - NOPA": "1745 Grove St, San Francisco, CA 94117 (NOPA)",
-    "Bi-Rite Market - Yerba Buena": "50 4th St, San Francisco, CA 94103 (Downtown)",
     "Gus’s Community Market - Harrison": "2111 Harrison St, San Francisco, CA 94110 (Mission)",
-    "Gus’s Community Market - Mission Bay": "1101 4th St, San Francisco, CA 94158 (Mission Bay)",
-    "Gus’s Community Market - Noriega": "2550 Noriega St, San Francisco, CA 94122 (Outer Sunset)",
     "The Good Life Grocery - Cortland": "448 Cortland Ave, San Francisco, CA 94110 (Bernal Heights)",
-    "The Good Life Grocery - Potrero": "1524 20th St, San Francisco, CA 94107 (Potrero Hill)",
     "Haight Street Market": "1530 Haight St, San Francisco, CA 94117 (Haight-Ashbury)",
     "Falletti Foods": "308 Broderick St, San Francisco, CA 94117 (NOPA)",
     "Andronico's Community Markets": "1200 Irving St, San Francisco, CA 94122 (Inner Sunset)",
 
-    # --- Specialty Grocery & Gourmet ---
+    # --- Specialty & Gourmet ---
     "The Epicurean Trader - Bernal": "401 Cortland Ave, San Francisco, CA 94110 (Bernal Heights)",
     "The Epicurean Trader - Cow Hollow": "1909 Union St, San Francisco, CA 94123 (Cow Hollow)",
     "The Epicurean Trader - Hayes Valley": "465 Hayes St, San Francisco, CA 94102 (Hayes Valley)",
-    "The Epicurean Trader - Noe Valley": "4015 24th St, San Francisco, CA 94114 (Noe Valley)",
-    "The Epicurean Trader - Russian Hill": "1111 Polk St, San Francisco, CA 94109 (Russian Hill)",
     "Luke's Local - Cole Valley": "960 Cole St, San Francisco, CA 94117 (Cole Valley)",
     "Luke's Local - Union": "2190 Union St, San Francisco, CA 94123 (Marina)",
-    "Luke's Local - Sutter": "1455 Sutter St, San Francisco, CA 94109 (Van Ness)",
-    "Luke's Local - Taraval": "2300 Taraval St, San Francisco, CA 94116 (Parkside)",
     "Luke's Local - Valencia": "900 Valencia St, San Francisco, CA 94110 (Mission)",
     "The Real Food Company": "2140 Polk St, San Francisco, CA 94109 (Russian Hill)",
-    "Bryant Market": "1050 Bryant St, San Francisco, CA 94103 (SoMa)",
-    "Little Vine": "1541 Grant Ave, San Francisco, CA 94133 (North Beach)",
 
-    # --- Specialty Beverage & Coffee ---
+    # --- Specialty Coffee & Drinks ---
     "Philz Coffee - Folsom": "300 Folsom St, San Francisco, CA 94105 (East Cut)",
     "Philz Coffee - 24th St": "3101 24th St, San Francisco, CA 94110 (Mission)",
     "Ritual Coffee - Valencia": "1026 Valencia St, San Francisco, CA 94110 (Mission)",
-    "Ritual Coffee - Haight": "1300 Haight St, San Francisco, CA 94117 (Haight-Ashbury)",
-    "Blue Bottle Coffee - Mint Plaza": "66 Mint St, San Francisco, CA 94103 (SoMa)",
     "Blue Bottle Coffee - Ferry Building": "1 Ferry Building, San Francisco, CA 94111 (Embarcadero)",
-    "Boba Guys - Mission": "3491 19th St, San Francisco, CA 94110 (Mission)",
     "Boba Guys - Hayes Valley": "429 Hayes St, San Francisco, CA 94102 (Hayes Valley)",
-    "Boba Guys - Fillmore": "1522 Fillmore St, San Francisco, CA 94115 (Western Addition)",
 
-    # --- Ethnic & International Markets ---
+    # --- Ethnic Markets ---
     "New May Wah Market": "707 Clement St, San Francisco, CA 94118 (Inner Richmond)",
     "99 Ranch Market": "5151 Geary Blvd, San Francisco, CA 94118 (Outer Richmond)",
     "H Mart": "3995 Alemany Blvd, San Francisco, CA 94132 (Ingleside)",
     "La Loma Produce": "2847 Mission St, San Francisco, CA 94110 (Mission)",
     "Casa Lucas Market": "2934 24th St, San Francisco, CA 94110 (Mission)",
-    "Mollie Stone's Markets": "2435 California St, San Francisco, CA 94115 (Pacific Heights)",
     "Nijiya Market": "1737 Post St, San Francisco, CA 94115 (Japantown)",
+}
 
-    # --- Farmers Markets (Seasonal) ---
+# --- Farmers Markets ---
+FARMERS_MARKETS = {
     "Ferry Plaza Farmers Market (Seasonal)": "1 Ferry Building, San Francisco, CA 94111 (Embarcadero)",
     "Heart of the City Farmers Market (Seasonal)": "1182 Market St, San Francisco, CA 94102 (Civic Center)",
     "Mission Community Market (Seasonal)": "22nd St & Bartlett St, San Francisco, CA 94110 (Mission)",
@@ -102,6 +89,9 @@ Results come from public shopping listings via SerpAPI.
 We show one lowest-priced listing per store.
 """)
 
+show_farmers = st.toggle("🌾 Show Seasonal Farmers' Markets", value=False)
+STORES = {**LOCAL_STORES, **FARMERS_MARKETS} if show_farmers else LOCAL_STORES
+
 query = st.text_input("Search any product (e.g., Philz Coffee, oat milk, PS5):")
 
 if query:
@@ -109,7 +99,7 @@ if query:
 
     params = {
         "engine": "google_shopping",
-        "q": f'"{query}"',  # exact match search
+        "q": f'"{query}"',
         "location": "San Francisco, California, United States",
         "hl": "en",
         "gl": "us",
@@ -134,20 +124,18 @@ if query:
                 link = r.get("link", "")
                 thumbnail = r.get("thumbnail")
 
-                # --- Clean Google links ---
                 if link.startswith("https://www.google.com/search?"):
                     link = f"https://www.google.com/search?q={quote(title + ' ' + source)}"
 
                 total = price * (1 + TAX_RATE)
                 items.append((title, source, price, total, link, thumbnail))
 
-            # --- Display Cards ---
             for title, source, price, total, link, thumbnail in items:
                 st.markdown(f"### {title}")
                 if thumbnail:
                     st.image(thumbnail, width=150)
 
-                address = LOCAL_STORES.get(source, f"{source} — various SF locations")
+                address = STORES.get(source, f"{source} — various SF locations")
                 st.markdown(f"**{address}**")
                 st.markdown(f"**Price:** ${price:.2f}  💵 **Total after tax:** ${total:.2f}")
                 st.markdown(f"[🔗 View Product]({link})")
@@ -156,23 +144,25 @@ if query:
                 st.markdown(f"📍 [Find on Maps]({maps_link})")
                 st.divider()
 
-            # --- AI Summary ---
+            # --- AI Vibe Summary ---
             cheapest = min(items, key=lambda x: x[3])
             c_title, c_store, c_price, c_total, _, _ = cheapest
             prompt = (
-                f"The cheapest product is '{c_title}' from {c_store} "
-                f"at ${c_price:.2f} before tax and ${c_total:.2f} after applying "
-                f"San Francisco’s {TAX_RATE*100:.2f}% tax. "
-                "Write a single friendly summary of this deal."
+                f"You're a witty San Franciscan shopping buddy. "
+                f"The cheapest product is '{c_title}' from {c_store}, "
+                f"priced at ${c_price:.2f} before tax and ${c_total:.2f} after "
+                f"the city's {TAX_RATE*100:.2f}% rate. "
+                f"Add a local touch, use fitting emojis (☕, 🥬, 🎮, 💄, 💸), "
+                f"and keep it friendly — one casual sentence."
             )
 
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a concise, upbeat shopping guide."},
+                    {"role": "system", "content": "You're a fun, local SF deal expert with a friendly tone."},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.7,
+                temperature=0.9,
             )
 
             st.markdown("### 🧠 AI Recommendation")
