@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import streamlit as st
+import pandas as pd
 from openai import OpenAI
 
 # --- API Keys ---
@@ -11,11 +12,12 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # --- Initialize OpenAI client ---
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# --- Streamlit app ---
+# --- Streamlit app setup ---
+st.set_page_config(page_title="PricePilot", page_icon="🛫")
 st.title("🛫 PricePilot")
 st.write("Compare live prices across BestBuy, Walmart, and Google Shopping.")
 
-# --- Function to fetch prices using SerpAPI ---
+# --- Function to fetch prices from SerpAPI ---
 def fetch_prices(product):
     if not SERPAPI_KEY:
         st.error("❌ Missing SERPAPI_KEY. Please add it in Streamlit secrets.")
@@ -26,9 +28,9 @@ def fetch_prices(product):
     results = []
     for item in data.get("shopping_results", [])[:5]:
         results.append({
-            "store": item.get("source"),
-            "price": item.get("extracted_price"),
-            "link": item.get("link")
+            "Store": item.get("source"),
+            "Price ($)": item.get("extracted_price"),
+            "Link": item.get("link")
         })
     return results
 
@@ -38,9 +40,8 @@ def analyze_prices(prices):
         return "❌ Missing OPENAI_API_KEY. Please add it in Streamlit secrets."
 
     summary_prompt = f"""
-    You are a shopping analyst. Given this list of prices, determine which store offers the best deal.
-    Suggest whether the user should buy online or in person.
-    Here’s the data:
+    You are a shopping analyst. Given this list of store prices, find the cheapest option and
+    explain in plain English which store provides the best value and why.
     {json.dumps(prices, indent=2)}
     """
     try:
@@ -50,7 +51,7 @@ def analyze_prices(prices):
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"⚠️ AI analysis unavailable ({str(e)[:80]}...)"
+        return f"⚠️ AI analysis unavailable ({str(e)[:100]}...)"
 
 # --- UI Input ---
 product = st.text_input("Enter a product name (e.g. AirPods Pro 2):")
@@ -63,14 +64,15 @@ if st.button("🔍 Search"):
             prices = fetch_prices(product)
 
         if prices:
+            df = pd.DataFrame(prices)
             st.subheader("💰 Price Results")
-            st.json(prices)
+            st.dataframe(df, use_container_width=True)
 
             with st.spinner("Analyzing best deal with AI..."):
                 analysis = analyze_prices(prices)
 
             st.subheader("🧠 AI Recommendation")
-            st.write(analysis)
+            st.markdown(f"✅ **{analysis}**")
         else:
             st.error("No results found. Try another product name.")
 
