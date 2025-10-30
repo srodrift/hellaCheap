@@ -5,7 +5,9 @@ import pandas as pd
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# Load environment variables
+# -------------------------------
+# 🔐 Load environment variables
+# -------------------------------
 load_dotenv()
 
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
@@ -14,7 +16,7 @@ OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_KEY)
 
 # -------------------------------
-# 🧭 CONFIG
+# 🧭 Streamlit Config
 # -------------------------------
 st.set_page_config(page_title="🛒 HellaCheap SF", page_icon="💸", layout="centered")
 
@@ -28,7 +30,7 @@ We show **only one lowest-priced listing per store**.
 )
 
 # -------------------------------
-# 🗺️ BAY AREA TAXES
+# 💸 Bay Area Tax Rates
 # -------------------------------
 bay_area_taxes = {
     "San Francisco": 9.625,
@@ -45,12 +47,15 @@ tax_rate = bay_area_taxes[city]
 st.markdown(f"💸 **Tax rate applied:** {tax_rate}%")
 
 # -------------------------------
-# 🔍 PRODUCT SEARCH
+# 🔍 Search Input
 # -------------------------------
 query = st.text_input("Search any product (e.g., AirPods Pro, oat milk, PS5):")
 
+# -------------------------------
+# 🧾 Fetch Results
+# -------------------------------
 def fetch_results(search_query):
-    """Fetch results from SerpAPI"""
+    """Fetch shopping results using SerpAPI"""
     url = "https://serpapi.com/search"
     params = {
         "engine": "google_shopping",
@@ -58,8 +63,8 @@ def fetch_results(search_query):
         "location": "San Francisco Bay Area, California, United States",
         "api_key": SERPAPI_KEY,
     }
-    resp = requests.get(url, params=params)
-    data = resp.json()
+    response = requests.get(url, params=params)
+    data = response.json()
 
     if "shopping_results" not in data:
         return []
@@ -96,8 +101,11 @@ def fetch_results(search_query):
     return results
 
 
-def summarize_with_ai(product_name, cheapest_item):
-    """Use OpenAI to generate a smart summary"""
+# -------------------------------
+# 🧠 AI Recommendation
+# -------------------------------
+def summarize_with_ai(product_name, cheapest_item, tax_rate):
+    """Use OpenAI to create a concise friendly summary"""
     try:
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -108,15 +116,22 @@ def summarize_with_ai(product_name, cheapest_item):
                 },
                 {
                     "role": "user",
-                    "content": f"The cheapest {product_name} is {cheapest_item['title']} from {cheapest_item['source']} priced at ${cheapest_item['price']:.2f}. The Bay Area tax rate is {tax_rate}%. Recommend why it's the best deal in a short friendly tone.",
+                    "content": f"The cheapest {product_name} is '{cheapest_item['title']}' from {cheapest_item['source']} priced at ${cheapest_item['price']:.2f}. The Bay Area tax rate is {tax_rate}%. Recommend why it's the best deal in a short, friendly tone.",
                 },
             ],
         )
-        return completion.choices[0].message.content.strip()
+        summary = completion.choices[0].message.content.strip()
+        clean_summary = (
+            summary.replace("\n", " ").replace("\r", "").replace("  ", " ").strip()
+        )
+        return clean_summary
     except Exception as e:
         return f"(AI summary unavailable: {e})"
 
 
+# -------------------------------
+# 💰 Main Search + Display
+# -------------------------------
 if query:
     st.markdown(f"### 💰 {city} Prices (including tax)")
     st.markdown(f"Tax rate applied: **{tax_rate}%**")
@@ -126,19 +141,20 @@ if query:
     if not results:
         st.warning("No results found. Try a different search term!")
     else:
-        # Remove duplicates by source, keep lowest price per store
+        # Keep lowest price per store
         df = pd.DataFrame(results)
         df = df.sort_values("price").drop_duplicates(subset="source", keep="first")
 
         for _, row in df.iterrows():
             total = round(row["price"] * (1 + tax_rate / 100), 2)
+            store = row["source"] or "Unknown Store"
 
             st.markdown(f"**{row['title']}**")
-            st.write(f"{row['source']} — **${row['price']:.2f}**")
+            st.write(f"{store} — **${row['price']:.2f}**")
             st.write(f"Total after tax: **${total:.2f}**")
 
-            # Google Maps search link for store
-            store_query = f"{row['source']} {city}"
+            # Google Maps link
+            store_query = f"{store} {city}"
             maps_url = f"https://www.google.com/maps/search/{store_query.replace(' ', '+')}"
             st.markdown(f"[📍 Find on Maps]({maps_url})")
 
@@ -150,10 +166,10 @@ if query:
 
             st.markdown("---")
 
-        # AI Recommendation
+        # AI Summary
         cheapest = df.iloc[0].to_dict()
-        ai_summary = summarize_with_ai(query, cheapest)
-        st.markdown(f"### 🧠 AI Recommendation\n\n{ai_summary.strip()}")
+        ai_summary = summarize_with_ai(query, cheapest, tax_rate)
+        st.markdown(f"### 🧠 AI Recommendation\n\n{ai_summary}")
 
 else:
     st.info("👆 Enter a product above to start comparing prices!")
