@@ -20,7 +20,12 @@ st.markdown(
 
 # ---- USER INPUTS ----
 product_name = st.text_input("Enter a product name (e.g. AirPods Pro 2):")
-filter_term = st.text_input("Optional: must include this word in title (e.g. San Francisco):")
+filter_terms_input = st.text_input(
+    "Optional: must include these words (comma-separated, e.g. San Francisco, 2024, paperback):"
+)
+
+# Convert filters into a list
+filter_terms = [term.strip().lower() for term in filter_terms_input.split(",") if term.strip()]
 
 # ---- FUNCTION TO FETCH PRICES ----
 def fetch_prices(product_name):
@@ -43,7 +48,6 @@ def fetch_prices(product_name):
             if not price_str:
                 continue
 
-            # Parse price
             try:
                 price = float("".join(ch for ch in price_str if ch.isdigit() or ch == "."))
             except:
@@ -53,8 +57,8 @@ def fetch_prices(product_name):
             if not link or not link.startswith("http"):
                 link = f"https://www.google.com/search?q={product_name.replace(' ', '+')}+buy"
 
-            # Apply user filter
-            if filter_term and filter_term.lower() not in title.lower():
+            # Apply multiple filter terms
+            if filter_terms and not all(term in title.lower() for term in filter_terms):
                 continue
 
             # Keep only lowest per store
@@ -78,7 +82,7 @@ if product_name:
     prices = fetch_prices(product_name)
 
     if not prices:
-        st.warning("No prices found matching your query. Try adjusting the filter.")
+        st.warning("No prices found matching your query. Try adjusting the filters.")
     else:
         df = pd.DataFrame(prices)
         for _, row in df.iterrows():
@@ -98,7 +102,7 @@ if product_name:
                     unsafe_allow_html=True
                 )
 
-        # ---- AI-LIKE RECOMMENDATION ----
+        # ---- AI Recommendation ----
         best = min(prices, key=lambda x: x["price"])
         st.markdown("### 🧠 AI Recommendation")
         st.markdown(
