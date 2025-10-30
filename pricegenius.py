@@ -1,335 +1,181 @@
-import os
-import math
-import json
-from collections import defaultdict
-
-import requests
-import pandas as pd
 import streamlit as st
+import requests
+import os
+from dotenv import load_dotenv
+from openai import OpenAI
+from urllib.parse import quote
 
-# --- Optional AI (auto-disables if no key) ---
-try:
-    from openai import OpenAI
-    OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-    client = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
-except Exception:
-    client = None
-
+# --- Load API Keys ---
+load_dotenv()
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
-# ---------------- UI ----------------
-st.set_page_config(page_title="HellaCheap SF Bay", page_icon="🛒", layout="centered")
-st.title("🛒 HellaCheap — Bay Area Deals")
-st.caption("Compare local-ish prices across Bay Area stores (via Google Shopping/SerpAPI). One lowest listing per store, with city tax.")
+# --- Initialize OpenAI ---
+client = OpenAI(api_key=OPENAI_KEY)
 
-if not SERPAPI_KEY:
-    st.error("Missing SERPAPI_KEY. Add it to your local .env or Streamlit Cloud secrets.")
-    st.stop()
+# --- SF Tax Rate ---
+TAX_RATE = 0.09625  # 9.625%
 
-# Bay Area city tax rates (approx, can tweak)
-CITY_TAX = {
-    "San Francisco": 0.09625,  # 9.625%
-    "Oakland":       0.1050,   # 10.50%
-    "Berkeley":      0.1075,   # 10.75%
-    "San Jose":      0.0925,   # 9.25%
-    "Palo Alto":     0.0925,   # 9.25%
-    "Fremont":       0.0975,   # 9.75%
+# --- San Francisco Store Directory (hyperlocal) ---
+LOCAL_STORES = {
+    # --- Major Chains ---
+    "Trader Joe's - SOMA": "555 9th St, San Francisco, CA 94103 (SoMa)",
+    "Trader Joe's - Masonic": "2675 Geary Blvd, San Francisco, CA 94118 (Laurel Heights)",
+    "Trader Joe's - Stonestown": "265 Winston Dr, San Francisco, CA 94132 (Stonestown Galleria)",
+    "Trader Joe's - Castro": "2280 Market St, San Francisco, CA 94114 (Duboce Triangle)",
+    "Trader Joe's - North Beach": "401 Bay St, San Francisco, CA 94133 (North Beach)",
+    "Trader Joe's - Fisherman’s Wharf": "10 Bay St, San Francisco, CA 94133 (Wharf District)",
+    "Trader Joe's - California St": "3 Masonic Ave, San Francisco, CA 94118 (Presidio Heights)",
+    "Safeway - Market": "2300 16th St, San Francisco, CA 94103 (Mission)",
+    "Safeway - Marina": "15 Marina Blvd, San Francisco, CA 94123 (Marina District)",
+    "Safeway - Noriega": "2350 Noriega St, San Francisco, CA 94122 (Outer Sunset)",
+    "Whole Foods - Stanyan": "690 Stanyan St, San Francisco, CA 94117 (Haight)",
+    "Whole Foods - 4th St": "399 4th St, San Francisco, CA 94107 (South Beach)",
+    "Whole Foods - Ocean Ave": "1150 Ocean Ave, San Francisco, CA 94112 (Ingleside)",
+    "Costco": "450 10th St, San Francisco, CA 94103 (SoMa)",
+
+    # --- Local & Community Markets ---
+    "Bi-Rite Market - Divisadero": "550 Divisadero St, San Francisco, CA 94117 (Alamo Square)",
+    "Bi-Rite Market - 18th St": "3639 18th St, San Francisco, CA 94110 (Mission)",
+    "Bi-Rite Market - NOPA": "1745 Grove St, San Francisco, CA 94117 (NOPA)",
+    "Bi-Rite Market - Yerba Buena": "50 4th St, San Francisco, CA 94103 (Downtown)",
+    "Gus’s Community Market - Harrison": "2111 Harrison St, San Francisco, CA 94110 (Mission)",
+    "Gus’s Community Market - Mission Bay": "1101 4th St, San Francisco, CA 94158 (Mission Bay)",
+    "Gus’s Community Market - Noriega": "2550 Noriega St, San Francisco, CA 94122 (Outer Sunset)",
+    "The Good Life Grocery - Cortland": "448 Cortland Ave, San Francisco, CA 94110 (Bernal Heights)",
+    "The Good Life Grocery - Potrero": "1524 20th St, San Francisco, CA 94107 (Potrero Hill)",
+    "Haight Street Market": "1530 Haight St, San Francisco, CA 94117 (Haight-Ashbury)",
+    "Falletti Foods": "308 Broderick St, San Francisco, CA 94117 (NOPA)",
+    "Andronico's Community Markets": "1200 Irving St, San Francisco, CA 94122 (Inner Sunset)",
+
+    # --- Specialty Grocery & Gourmet ---
+    "The Epicurean Trader - Bernal": "401 Cortland Ave, San Francisco, CA 94110 (Bernal Heights)",
+    "The Epicurean Trader - Cow Hollow": "1909 Union St, San Francisco, CA 94123 (Cow Hollow)",
+    "The Epicurean Trader - Hayes Valley": "465 Hayes St, San Francisco, CA 94102 (Hayes Valley)",
+    "The Epicurean Trader - Noe Valley": "4015 24th St, San Francisco, CA 94114 (Noe Valley)",
+    "The Epicurean Trader - Russian Hill": "1111 Polk St, San Francisco, CA 94109 (Russian Hill)",
+    "Luke's Local - Cole Valley": "960 Cole St, San Francisco, CA 94117 (Cole Valley)",
+    "Luke's Local - Union": "2190 Union St, San Francisco, CA 94123 (Marina)",
+    "Luke's Local - Sutter": "1455 Sutter St, San Francisco, CA 94109 (Van Ness)",
+    "Luke's Local - Taraval": "2300 Taraval St, San Francisco, CA 94116 (Parkside)",
+    "Luke's Local - Valencia": "900 Valencia St, San Francisco, CA 94110 (Mission)",
+    "The Real Food Company": "2140 Polk St, San Francisco, CA 94109 (Russian Hill)",
+    "Bryant Market": "1050 Bryant St, San Francisco, CA 94103 (SoMa)",
+    "Little Vine": "1541 Grant Ave, San Francisco, CA 94133 (North Beach)",
+
+    # --- Specialty Beverage & Coffee ---
+    "Philz Coffee - Folsom": "300 Folsom St, San Francisco, CA 94105 (East Cut)",
+    "Philz Coffee - 24th St": "3101 24th St, San Francisco, CA 94110 (Mission)",
+    "Ritual Coffee - Valencia": "1026 Valencia St, San Francisco, CA 94110 (Mission)",
+    "Ritual Coffee - Haight": "1300 Haight St, San Francisco, CA 94117 (Haight-Ashbury)",
+    "Blue Bottle Coffee - Mint Plaza": "66 Mint St, San Francisco, CA 94103 (SoMa)",
+    "Blue Bottle Coffee - Ferry Building": "1 Ferry Building, San Francisco, CA 94111 (Embarcadero)",
+    "Boba Guys - Mission": "3491 19th St, San Francisco, CA 94110 (Mission)",
+    "Boba Guys - Hayes Valley": "429 Hayes St, San Francisco, CA 94102 (Hayes Valley)",
+    "Boba Guys - Fillmore": "1522 Fillmore St, San Francisco, CA 94115 (Western Addition)",
+
+    # --- Ethnic & International Markets ---
+    "New May Wah Market": "707 Clement St, San Francisco, CA 94118 (Inner Richmond)",
+    "99 Ranch Market": "5151 Geary Blvd, San Francisco, CA 94118 (Outer Richmond)",
+    "H Mart": "3995 Alemany Blvd, San Francisco, CA 94132 (Ingleside)",
+    "La Loma Produce": "2847 Mission St, San Francisco, CA 94110 (Mission)",
+    "Casa Lucas Market": "2934 24th St, San Francisco, CA 94110 (Mission)",
+    "Mollie Stone's Markets": "2435 California St, San Francisco, CA 94115 (Pacific Heights)",
+    "Nijiya Market": "1737 Post St, San Francisco, CA 94115 (Japantown)",
+
+    # --- Farmers Markets (Seasonal) ---
+    "Ferry Plaza Farmers Market (Seasonal)": "1 Ferry Building, San Francisco, CA 94111 (Embarcadero)",
+    "Heart of the City Farmers Market (Seasonal)": "1182 Market St, San Francisco, CA 94102 (Civic Center)",
+    "Mission Community Market (Seasonal)": "22nd St & Bartlett St, San Francisco, CA 94110 (Mission)",
+    "Fort Mason Farmers Market (Seasonal)": "2 Marina Blvd, San Francisco, CA 94123 (Fort Mason)",
+    "Noe Valley Farmers Market (Seasonal)": "3861 24th St, San Francisco, CA 94114 (Noe Valley)",
 }
 
-# Neighborhood/ZIP hints (lightweight, not exhaustive)
-# Each store maps to a list of (City, Neighborhood, ZIP)
-STORE_AREAS = {
-    "Safeway": [
-        ("San Francisco", "Mission", "94103"),
-        ("San Francisco", "Outer Sunset", "94122"),
-        ("Oakland", "Grand Lake", "94610"),
-        ("Berkeley", "North Berkeley", "94703"),
-        ("San Jose", "Willow Glen", "95125"),
-        ("Palo Alto", "Midtown", "94303"),
-        ("Fremont", "Irvington", "94538"),
-    ],
-    "Trader Joe's": [
-        ("San Francisco", "Laurel Heights", "94118"),
-        ("San Francisco", "SoMa", "94103"),
-        ("Berkeley", "Downtown", "94704"),
-        ("San Jose", "Stevens Creek", "95129"),
-        ("Palo Alto", "California Ave", "94306"),
-    ],
-    "Target": [
-        ("San Francisco", "Mission", "94110"),
-        ("San Francisco", "Metreon/SoMa", "94103"),
-        ("Oakland", "Eastlake", "94606"),
-        ("San Jose", "Blossom Hill", "95123"),
-        ("Fremont", "Pacific Commons", "94538"),
-    ],
-    "Costco": [
-        ("San Francisco", "SoMa", "94103"),
-        ("South San Francisco", "Oyster Point", "94080"),
-        ("San Jose", "North San Jose", "95134"),
-        ("Fremont", "Auto Mall", "94538"),
-    ],
-    "Whole Foods": [
-        ("San Francisco", "SoMa", "94105"),
-        ("San Francisco", "Noe Valley", "94114"),
-        ("Oakland", "Uptown", "94612"),
-        ("Berkeley", "Gilman", "94710"),
-        ("San Jose", "The Alameda", "95126"),
-    ],
-    "Walmart": [
-        ("San Leandro", "Bayfair", "94578"),
-        ("Mountain View", "Showers Dr", "94040"),
-        ("San Jose", "Almaden", "95118"),
-        ("Fremont", "Warm Springs", "94538"),
-    ],
-    "Best Buy": [
-        ("San Francisco", "SoMa", "94103"),
-        ("San Carlos", "Industrial Rd", "94070"),
-        ("San Jose", "Stevens Creek", "95129"),
-        ("Fremont", "Auto Mall", "94538"),
-    ],
-    "CVS": [
-        ("San Francisco", "Civic Center", "94102"),
-        ("San Francisco", "Inner Sunset", "94122"),
-        ("Oakland", "Temescal", "94609"),
-        ("San Jose", "Downtown", "95112"),
-    ],
-    "Walgreens": [
-        ("San Francisco", "Market St / Union Sq", "94102"),
-        ("San Francisco", "Inner Richmond", "94118"),
-        ("Berkeley", "Downtown", "94704"),
-        ("San Jose", "Willow Glen", "95125"),
-    ],
-    "H Mart": [
-        ("San Francisco", "Oceanview/Daly City edge", "94014"),
-        ("San Jose", "Koreatown", "95118"),
-        ("San Jose", "North San Jose", "95131"),
-    ],
-    "99 Ranch": [
-        ("Daly City", "Serramonte", "94015"),
-        ("Fremont", "Warm Springs", "94538"),
-        ("San Jose", "North Valley", "95133"),
-    ],
-    "Bi-Rite": [
-        ("San Francisco", "Mission", "94110"),
-        ("San Francisco", "Western Addition", "94117"),
-    ],
-    "Gus's Market": [
-        ("San Francisco", "Mission", "94103"),
-        ("San Francisco", "Mission Bay", "94158"),
-    ],
-    "Rainbow Grocery": [
-        ("San Francisco", "Mission", "94103"),
-    ],
-    "Mollie Stone's": [
-        ("San Francisco", "Pacific Heights", "94123"),
-        ("Palo Alto", "Midtown", "94303"),
-        ("Burlingame", "Broadway", "94010"),
-    ],
-    "The Good Life Grocery": [
-        ("San Francisco", "Bernal Heights", "94110"),
-        ("San Francisco", "Potrero Hill", "94107"),
-    ],
-    "Le Beau Market": [
-        ("San Francisco", "Nob Hill", "94109"),
-    ],
-    "Luke's Local": [
-        ("San Francisco", "Cole Valley", "94117"),
-        ("San Francisco", "Cow Hollow", "94123"),
-    ],
-    "Berkeley Bowl": [
-        ("Berkeley", "South Berkeley", "94703"),
-        ("Berkeley", "West Berkeley", "94710"),
-    ],
-    "Ranch 99": [  # synonym
-        ("Fremont", "Warm Springs", "94538"),
-        ("San Jose", "North Valley", "95133"),
-    ],
-}
-
-BAY_CITIES = list(CITY_TAX.keys())
-city = st.selectbox("Select your Bay Area city:", BAY_CITIES, index=0)
-tax = CITY_TAX[city]
-st.markdown(f"**💸 Tax rate applied:** {round(tax*100, 3)}%")
-
-query = st.text_input("Search any product (e.g., AirPods Pro, oat milk, PS5):", value="okra")
-run = st.button("Search")
+# --- Streamlit UI ---
+st.set_page_config(page_title="HellaCheap SF", page_icon="💸", layout="wide")
+st.title("🛒 HellaCheap SF")
+st.caption("Compare local San Francisco prices — powered by SerpAPI + OpenAI")
 
 st.divider()
+st.markdown("""
+Results come from public shopping listings via SerpAPI.  
+We show one lowest-priced listing per store.
+""")
 
-# --------- helpers ---------
+query = st.text_input("Search any product (e.g., Philz Coffee, oat milk, PS5):")
 
-def maps_search_url(store: str, city_name: str):
-    # simple & reliable: Google Maps search; no brittle address
-    q = f"{store} {city_name}"
-    return f"https://www.google.com/maps/search/{requests.utils.quote(q)}"
+if query:
+    st.subheader(f"💰 San Francisco Prices (including tax @ {TAX_RATE*100:.3f}%)")
 
-def infer_area_hint(store: str, city_name: str):
-    """Pick a neighborhood/ZIP hint for the store in this city if we have one."""
-    entries = STORE_AREAS.get(store) or STORE_AREAS.get(store.replace("’","'")) or []
-    candidates = [e for e in entries if e[0] == city_name]
-    if candidates:
-        # choose a deterministic pick based on hash to keep same result per store
-        idx = abs(hash(store + city_name)) % len(candidates)
-        _, neighborhood, zipc = candidates[idx]
-        return f"{neighborhood}, {zipc}"
-    # If we have entries for other cities, show generic ZIP tag for city
-    return f"{city_name} area"
-
-def normalize_store(raw_source: str):
-    # Clean up noisy source strings like "Walmart - Seller", "eBay - user", etc.
-    if not raw_source:
-        return "Unknown"
-    s = raw_source.strip()
-    # Trim seller suffix
-    for sep in [" - ", " — "]:
-        if sep in s:
-            left = s.split(sep, 1)[0].strip()
-            if left:
-                s = left
-                break
-    # Unify aliases
-    aliases = {
-        "Ranch 99": "99 Ranch",
-        "99 Ranch Market": "99 Ranch",
-        "Hmart": "H Mart",
-        "Gus’s Market": "Gus's Market",
-        "Gus’ Market": "Gus's Market",
-        "Bi Rite": "Bi-Rite",
-        "BiRite": "Bi-Rite",
-    }
-    return aliases.get(s, s)
-
-def fetch_prices(search_term: str):
-    """Query SerpAPI's Google Shopping engine and return list of items with fields we care about."""
-    url = "https://serpapi.com/search.json"
     params = {
         "engine": "google_shopping",
-        "q": search_term,
+        "q": f'"{query}"',  # exact match search
+        "location": "San Francisco, California, United States",
         "hl": "en",
         "gl": "us",
         "api_key": SERPAPI_KEY,
-        "num": "80",   # get more, we'll dedupe
     }
-    r = requests.get(url, params=params, timeout=30)
-    r.raise_for_status()
-    data = r.json()
-    items = []
-    for it in data.get("shopping_results", []):
-        price = it.get("extracted_price")
-        if price is None:
-            continue
-        source = normalize_store(it.get("source"))
-        # Prefer serpapi product link if present; else fall back to raw link
-        link = it.get("product_link") or it.get("link")
-        title = it.get("title") or search_term
-        thumbnail = None
-        if "thumbnail" in it:
-            thumbnail = it["thumbnail"]
-        items.append({
-            "title": title,
-            "store": source,
-            "price": float(price),
-            "link": link,
-            "thumb": thumbnail
-        })
-    return items
 
-def choose_lowest_per_store(items):
-    """Deduplicate by store, keep the lowest-priced item."""
-    best = {}
-    for it in items:
-        s = it["store"]
-        if s not in best or it["price"] < best[s]["price"]:
-            best[s] = it
-    # Return stable order by price asc
-    return sorted(best.values(), key=lambda x: x["price"])
+    res = requests.get("https://serpapi.com/search", params=params)
 
-def fmt_money(x):
-    return f"${x:,.2f}"
-
-def ai_summary(city_name: str, tax_rate: float, rows: list[dict]):
-    """Optional AI summary; falls back to deterministic text if no OpenAI key."""
-    if not rows:
-        return "No results to analyze."
-    cheapest = rows[0]
-    price = cheapest["price"]
-    total = price * (1 + tax_rate)
-    if not client:
-        return f"The best price is **{fmt_money(price)}** at **{cheapest['store']}** (≈ {fmt_money(total)} after {round(tax_rate*100,3)}% {city_name} tax)."
-    try:
-        msg = (
-            "You are a concise shopping assistant. "
-            "Given the result list (already deduped by store, ascending by price), "
-            f"pick the single cheapest and give a one-sentence recommendation. Include city tax {round(tax_rate*100,3)}%.\n\n"
-            f"City: {city_name}\n"
-            f"Results JSON: {json.dumps(rows[:8], ensure_ascii=False)}"
-        )
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role":"user","content":msg}],
-            temperature=0.2,
-            max_tokens=120,
-        )
-        text = resp.choices[0].message.content.strip()
-        # sanitize weird newlines that sometimes appear
-        text = " ".join(text.split())
-        return text
-    except Exception:
-        return f"The best price is **{fmt_money(price)}** at **{cheapest['store']}** (≈ {fmt_money(total)} after tax)."
-
-# ---------------- Run Search ----------------
-st.markdown("> _Results come from public shopping listings via SerpAPI. Stores may repeat because of bundles/resellers/stock; we show the **lowest** price per store._")
-
-if run and query.strip():
-    with st.spinner("Searching deals…"):
-        raw = fetch_prices(query.strip())
-        rows = choose_lowest_per_store(raw)
-
-    st.subheader(f"💰 {city} Prices (including tax)")
-    st.caption(f"Tax rate applied: {round(tax*100,3)}%")
-
-    if not rows:
-        st.info("No results found. Try a more specific search (e.g., model, size, flavor).")
+    if res.status_code != 200:
+        st.error("Error fetching data from SerpAPI.")
     else:
-        for it in rows:
-            store = it["store"]
-            title = it["title"]
-            price = it["price"]
-            total = price * (1 + tax)
+        data = res.json()
+        results = data.get("shopping_results", [])
+        if not results:
+            st.warning("No results found. Try another product.")
+        else:
+            items = []
+            for r in results:
+                title = r.get("title", "Unnamed Product")
+                source = r.get("source", "Unknown Store")
+                price = r.get("extracted_price", 0.0)
+                link = r.get("link", "")
+                thumbnail = r.get("thumbnail")
 
-            # Area hint
-            area_hint = infer_area_hint(store, city)
-            maps_url = maps_search_url(store, city)
+                # --- Clean Google links ---
+                if link.startswith("https://www.google.com/search?"):
+                    link = f"https://www.google.com/search?q={quote(title + ' ' + source)}"
 
-            # Render card
-            with st.container(border=True):
-                # Title
+                total = price * (1 + TAX_RATE)
+                items.append((title, source, price, total, link, thumbnail))
+
+            # --- Display Cards ---
+            for title, source, price, total, link, thumbnail in items:
                 st.markdown(f"### {title}")
+                if thumbnail:
+                    st.image(thumbnail, width=150)
 
-                # Thumbnail (small)
-                if it.get("thumb"):
-                    st.image(it["thumb"], width=120)
+                address = LOCAL_STORES.get(source, f"{source} — various SF locations")
+                st.markdown(f"**{address}**")
+                st.markdown(f"**Price:** ${price:.2f}  💵 **Total after tax:** ${total:.2f}")
+                st.markdown(f"[🔗 View Product]({link})")
 
-                # Store + area
-                st.markdown(f"**{store}** — _{area_hint}_")
+                maps_link = f"https://www.google.com/maps/search/{quote(source + ' San Francisco CA')}"
+                st.markdown(f"📍 [Find on Maps]({maps_link})")
+                st.divider()
 
-                # Price & total
-                st.markdown(f"**Price:** {fmt_money(price)}")
-                st.markdown(f"**Total after tax:** {fmt_money(total)}")
+            # --- AI Summary ---
+            cheapest = min(items, key=lambda x: x[3])
+            c_title, c_store, c_price, c_total, _, _ = cheapest
+            prompt = (
+                f"The cheapest product is '{c_title}' from {c_store} "
+                f"at ${c_price:.2f} before tax and ${c_total:.2f} after applying "
+                f"San Francisco’s {TAX_RATE*100:.2f}% tax. "
+                "Write a single friendly summary of this deal."
+            )
 
-                # Product link (optional)
-                if it.get("link"):
-                    # Most SerpAPI results provide a product page link; show it if present
-                    st.markdown(f"[🔗 View Product]({it['link']})")
-                else:
-                    st.caption("No direct product link available.")
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a concise, upbeat shopping guide."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.7,
+            )
 
-                # Maps search (optional utility)
-                st.markdown(f"[📍 Search this store in {city} on Google Maps]({maps_url})")
-
-        st.divider()
-        st.subheader("🧠 AI Recommendation")
-        st.write(ai_summary(city, tax, rows))
-
+            st.markdown("### 🧠 AI Recommendation")
+            st.markdown(response.choices[0].message.content.strip().replace("\n", " "))
 else:
-    st.info("Enter a product and click **Search** to see Bay Area prices.")
+    st.info("🔍 Type a product name above to get started!")
