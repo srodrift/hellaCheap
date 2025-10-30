@@ -1,0 +1,384 @@
+from operator import attrgetter
+from typing import Any
+
+from pydantic import BaseModel, Field, model_validator
+from typing_extensions import override
+
+from pipelex import log, pretty_print
+from pipelex.core.stuffs.html_content import HtmlContent
+from pipelex.core.stuffs.image_content import ImageContent
+from pipelex.core.stuffs.list_content import ListContent
+from pipelex.core.stuffs.mermaid_content import MermaidContent
+from pipelex.core.stuffs.number_content import NumberContent
+from pipelex.core.stuffs.pdf_content import PDFContent
+from pipelex.core.stuffs.stuff import DictStuff, Stuff
+from pipelex.core.stuffs.stuff_artefact import StuffArtefact
+from pipelex.core.stuffs.stuff_content import StuffContentType
+from pipelex.core.stuffs.text_and_images_content import TextAndImagesContent
+from pipelex.core.stuffs.text_content import TextContent
+from pipelex.exceptions import (
+    WorkingMemoryConsistencyError,
+    WorkingMemoryStuffAttributeNotFoundError,
+    WorkingMemoryStuffNotFoundError,
+    WorkingMemoryTypeError,
+)
+from pipelex.tools.misc.context_provider_abstract import ContextProviderAbstract
+from pipelex.types import Self
+
+MAIN_STUFF_NAME = "main_stuff"
+BATCH_ITEM_STUFF_NAME = "BATCH_ITEM"
+PRETTY_PRINT_MAX_LENGTH = 1000
+TEST_DUMMY_NAME = "dummy_result"
+
+StuffDict = dict[str, Stuff]
+StuffArtefactDict = dict[str, StuffArtefact]
+
+
+class DictWorkingMemory(BaseModel):
+    root: dict[str, DictStuff]
+    aliases: dict[str, str]
+
+
+class WorkingMemory(BaseModel, ContextProviderAbstract):
+    root: StuffDict = Field(default_factory=dict)
+    aliases: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_stuff_names(self) -> Self:
+        for key, stuff in self.root.items():
+            if key.startswith("_") and key != BATCH_ITEM_STUFF_NAME:
+                log.warning(f"Stuff key '{key}' starts with '_', which is reserved for params")
+
+            if not stuff.stuff_name:
+                self.root[key].stuff_name = key
+            elif key not in (MAIN_STUFF_NAME, stuff.stuff_name):
+                log.warning(f"Stuff name '{stuff.stuff_name}' does not match the key '{key}'")
+            elif stuff.stuff_name.startswith("_") and stuff.stuff_name != BATCH_ITEM_STUFF_NAME:
+                log.warning(f"Stuff name '{stuff.stuff_name}' starts with '_', which is reserved for params")
+
+        return self
+
+    def pretty_print_summary(self):
+        for stuff in self.root.values():
+            content = stuff.content.rendered_plain()
+            if len(content) > PRETTY_PRINT_MAX_LENGTH:
+                content = content[:PRETTY_PRINT_MAX_LENGTH] + "..."
+            pretty_print(content, title=f"{stuff.stuff_name} ({stuff.concept.code})")
+
+    def make_deep_copy(self) -> Self:
+        return self.model_copy(deep=True)
+
+    def get_optional_stuff(self, name: str) -> Stuff | None:
+        if named_stuff := self.root.get(name):
+            return named_stuff
+        if alias := self.aliases.get(name):
+            return self.root.get(alias)
+        return None
+
+    def get_optional_main_stuff(self) -> Stuff | None:
+        return self.get_optional_stuff(name=MAIN_STUFF_NAME)
+
+    def get_main_stuff(self) -> Stuff:
+        return self.get_stuff(name=MAIN_STUFF_NAME)
+
+    def get_stuff(self, name: str) -> Stuff:
+        if named_stuff := self.root.get(name):
+            return named_stuff
+        if alias := self.aliases.get(name):
+            stuff = self.root.get(alias)
+            if stuff is None:
+                raise WorkingMemoryStuffNotFoundError(
+                    variable_name=alias,
+                    message=f"Alias '{alias}' points to a non-existent stuff '{name}'",
+                )
+            return stuff
+        raise WorkingMemoryStuffNotFoundError(
+            variable_name=name,
+            message=f"Stuff '{name}' not found in working memory, valid keys are: {self.list_keys()}",
+        )
+
+    def get_stuffs(self, names: set[str]) -> list[Stuff]:
+        the_stuffs: list[Stuff] = []
+        for name in names:
+            the_stuffs.append(self.get_stuff(name=name))
+        return the_stuffs
+
+    def get_existing_stuffs(self, names: set[str]) -> list[Stuff]:
+        the_stuffs: list[Stuff] = []
+        for name in names:
+            if stuff := self.get_optional_stuff(name=name):
+                the_stuffs.append(stuff)
+        return the_stuffs
+
+    def is_stuff_code_used(self, stuff_code: str) -> bool:
+        return any(stuff.concept.code == stuff_code for stuff in self.root.values())
+
+    def remove_stuff(self, name: str):
+        self.root.pop(name, None)
+
+    def remove_main_stuff(self):
+        if MAIN_STUFF_NAME in self.root:
+            del self.root[MAIN_STUFF_NAME]
+
+    def set_stuff(self, name: str, stuff: Stuff):
+        self.root[name] = stuff
+
+    def add_new_stuff(self, name: str, stuff: Stuff, aliases: list[str] | None = None):
+        # TODO: Add unit tests for this method
+        if self.is_stuff_code_used(stuff_code=stuff.stuff_code):
+            msg = f"Stuff code '{stuff.stuff_code}' is already used by another stuff"
+            raise WorkingMemoryConsistencyError(msg)
+        if name in self.root or name in self.aliases:
+            existing_stuff = self.get_stuff(name=name)
+            if existing_stuff == stuff and name != TEST_DUMMY_NAME:
+                log.warning(f"Key '{name}' already exists in WorkingMemory with the same stuff")
+                return
+            elif name != TEST_DUMMY_NAME:
+                log.warning(f"Key '{name}' already exists in WorkingMemory and will be replaced by something different")
+                log.verbose(f"Existing stuff: {existing_stuff}")
+                log.verbose(f"New stuff: {stuff}")
+
+        # it's a new stuff
+        self.set_stuff(name=name, stuff=stuff)
+        if aliases:
+            for alias in aliases:
+                self.set_alias(alias, name)
+
+    def set_new_main_stuff(self, stuff: Stuff, name: str | None = None):
+        # TODO: Add unit tests for this method
+        if name:
+            self.remove_main_stuff()
+            self.add_new_stuff(name=name, stuff=stuff, aliases=[MAIN_STUFF_NAME])
+            log.verbose(f"Setting new main stuff {name}: {stuff.concept.code} = '{stuff.short_desc}'")
+        else:
+            self.remove_alias_to_main_stuff()
+            self.set_stuff(name=MAIN_STUFF_NAME, stuff=stuff)
+            log.verbose(f"Setting new main stuff (unnamed): {stuff.concept.code} = '{stuff.short_desc}'")
+
+    def set_alias(self, alias: str, target: str) -> None:
+        """Add an alias pointing to a target name."""
+        if alias == target:
+            msg = f"Cannot create alias '{alias}' pointing to itself"
+            raise WorkingMemoryConsistencyError(msg)
+        if target not in self.root:
+            msg = f"Cannot create alias to non-existent target '{target}'"
+            raise WorkingMemoryConsistencyError(msg)
+        self.aliases[alias] = target
+
+    def add_alias(self, alias: str, target: str) -> None:
+        """Add an alias pointing to a target name."""
+        if alias in self.root:
+            msg = f"Cannot add alias '{alias}' as it already exists"
+            raise WorkingMemoryConsistencyError(msg)
+        self.set_alias(alias=alias, target=target)
+
+    def remove_alias(self, alias: str) -> None:
+        """Remove an alias if it exists."""
+        if alias in self.aliases:
+            del self.aliases[alias]
+
+    def remove_alias_to_main_stuff(self) -> None:
+        """Remove the alias pointing to the main stuff if it exists."""
+        self.remove_alias(alias=MAIN_STUFF_NAME)
+
+    def get_aliases_for(self, target: str) -> list[str]:
+        """Get all aliases pointing to a target name."""
+        return [alias for alias, t in self.aliases.items() if t == target]
+
+    def list_keys(self) -> list[str]:
+        return list(self.root.keys()) + list(self.aliases.keys())
+
+    def pretty_print(self):
+        for name, stuff in self.root.items():
+            pretty_print(stuff.content.rendered_plain(), title=f"{name}: {stuff.concept.code}")
+
+    ################################################################################################
+    # ContextProviderAbstract
+    ################################################################################################
+
+    @override
+    def generate_context(self) -> dict[str, Any]:
+        artefact_dict: StuffArtefactDict = {}
+        for name, stuff in self.root.items():
+            artefact_dict[name] = stuff.make_artefact()
+        for alias, target in self.aliases.items():
+            artefact_dict[alias] = artefact_dict[target]
+        return artefact_dict
+
+    @override
+    def get_typed_object_or_attribute(self, name: str, wanted_type: type[Any] | None = None, accept_list: bool = False) -> Any:
+        # TODO: Refactor this method. In the python paradigm, we should not have those ".", but arrays with field names.
+        if "." in name:
+            parts = name.split(".", 1)  # Split only at the first dot
+            base_name = parts[0]
+            attr_path_str = parts[1]  # Keep the rest as a dot-separated string
+
+            base_stuff = self.get_stuff(base_name)
+            if isinstance(base_stuff.content, ListContent):
+                if not accept_list:
+                    raise WorkingMemoryTypeError(
+                        variable_name=name,
+                        message=f"Content of '{base_name}' is ListContent, but accept_list is False",
+                    )
+                the_items: list[Any] = []
+                list_content: ListContent[Any] = base_stuff.content  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+                for item in list_content.items:
+                    item_content = attrgetter(attr_path_str)(item)
+                    # check type
+                    if isinstance(item_content, list):
+                        for item_content_item in item_content:  # pyright: ignore[reportUnknownVariableType]
+                            if item_content_item is None:
+                                continue
+                            if wanted_type and not isinstance(item_content_item, wanted_type):
+                                raise WorkingMemoryTypeError(
+                                    variable_name=name,
+                                    message=(
+                                        f"Item of '{base_name}' is of type '{type(item_content_item).__name__}', "  # pyright: ignore[reportUnknownArgumentType]
+                                        f"it should be '{wanted_type.__name__}'"
+                                    ),
+                                )
+                            the_items.append(item_content_item)
+                    else:
+                        if item_content is None:
+                            continue
+                        if wanted_type and not isinstance(item_content, wanted_type):
+                            raise WorkingMemoryTypeError(
+                                variable_name=name,
+                                message=(
+                                    f"Item of item_content from '{base_name} [item] {attr_path_str}' is of type '{type(item_content).__name__}', "
+                                    f"it should be '{wanted_type.__name__}'"
+                                ),
+                            )
+                        the_items.append(item_content)
+                return the_items
+            try:
+                stuff_content = attrgetter(attr_path_str)(base_stuff.content)
+            except AttributeError as exc:
+                raise WorkingMemoryStuffAttributeNotFoundError(
+                    variable_name=name,
+                    message=f"Stuff attribute not found in attribute path '{name}': {exc}",
+                ) from exc
+
+            # Sometimes, some stuff content are Optional, therefore can be None. So Do not impose a wanted type
+            if stuff_content is not None and wanted_type is not None and not isinstance(stuff_content, wanted_type):
+                raise WorkingMemoryTypeError(
+                    variable_name=name,
+                    message=f"Content at '{name}' is of type '{type(stuff_content).__name__}', it should be '{wanted_type.__name__}'",
+                )
+
+            return stuff_content
+        content = self.get_stuff(name).content
+
+        if wanted_type is not None and not isinstance(content, wanted_type):
+            raise WorkingMemoryTypeError(
+                variable_name=name,
+                message=f"Content of '{name}' is of type '{type(content).__name__}', it should be '{wanted_type.__name__}'",
+            )
+
+        return content
+
+    ################################################################################################
+    # Stuff accessors
+    ################################################################################################
+
+    def get_stuff_as(self, name: str, content_type: type[StuffContentType]) -> StuffContentType:
+        """Get stuff content as StuffContentType."""
+        return self.get_stuff(name=name).content_as(content_type=content_type)
+
+    def get_stuff_as_list(self, name: str, item_type: type[StuffContentType]) -> ListContent[StuffContentType]:
+        """Get stuff content as ListContent with items of type StuffContentType.
+        If the items are of possibly various types, use item_type=StuffContent.
+        """
+        return self.get_stuff(name=name).as_list_of_fixed_content_type(item_type=item_type)
+
+    def get_list_stuff_first_item_as(self, name: str, item_type: type[StuffContentType]) -> StuffContentType:
+        """Get stuff content as ListContent with items of type StuffContentType then return the first item."""
+        return self.get_stuff_as_list(name=name, item_type=item_type).items[0]
+
+    def get_stuff_as_text(self, name: str) -> TextContent:
+        """Get stuff content as TextContent if applicable."""
+        return self.get_stuff(name=name).as_text
+
+    def get_stuff_as_str(self, name: str) -> str:
+        """Get stuff content as string if applicable."""
+        return self.get_stuff_as_text(name=name).text
+
+    def get_stuff_as_image(self, name: str) -> ImageContent:
+        """Get stuff content as ImageContent if applicable."""
+        return self.get_stuff(name=name).as_image
+
+    def get_stuff_as_text_and_image(self, name: str) -> TextAndImagesContent:
+        """Get stuff content as TextAndImageContent if applicable."""
+        return self.get_stuff(name=name).as_text_and_image
+
+    def get_stuff_as_pdf(self, name: str) -> PDFContent:
+        """Get stuff content as PDFContent if applicable."""
+        return self.get_stuff(name=name).as_pdf
+
+    def get_stuff_as_number(self, name: str) -> NumberContent:
+        """Get stuff content as NumberContent if applicable."""
+        return self.get_stuff(name=name).as_number
+
+    def get_stuff_as_html(self, name: str) -> HtmlContent:
+        """Get stuff content as HtmlContent if applicable."""
+        return self.get_stuff(name=name).as_html
+
+    def get_stuff_as_mermaid(self, name: str) -> MermaidContent:
+        """Get stuff content as MermaidContent if applicable."""
+        return self.get_stuff(name=name).as_mermaid
+
+    ################################################################################################
+    # Main stuff accessors
+    ################################################################################################
+
+    def main_stuff_as(self, content_type: type[StuffContentType]) -> StuffContentType:
+        """Get main stuff content as StuffContentType."""
+        return self.get_stuff_as(name=MAIN_STUFF_NAME, content_type=content_type)
+
+    def main_stuff_as_list(self, item_type: type[StuffContentType]) -> ListContent[StuffContentType]:
+        """Get main stuff content as ListContent with items of type StuffContentType.
+        If the items are of possibly various types, use item_type=StuffContent.
+        """
+        return self.get_stuff_as_list(name=MAIN_STUFF_NAME, item_type=item_type)
+
+    def main_list_stuff_first_item_as(self, item_type: type[StuffContentType]) -> StuffContentType:
+        """Get main stuff content as first list item of type StuffContentType."""
+        return self.get_list_stuff_first_item_as(name=MAIN_STUFF_NAME, item_type=item_type)
+
+    @property
+    def main_stuff_as_text(self) -> TextContent:
+        """Get main stuff content as TextContent if applicable."""
+        return self.get_stuff_as_text(name=MAIN_STUFF_NAME)
+
+    @property
+    def main_stuff_as_image(self) -> ImageContent:
+        """Get main stuff content as ImageContent if applicable."""
+        return self.get_stuff_as_image(name=MAIN_STUFF_NAME)
+
+    @property
+    def main_stuff_as_text_and_image(self) -> TextAndImagesContent:
+        """Get main stuff content as TextAndImageContent if applicable."""
+        return self.get_stuff_as_text_and_image(name=MAIN_STUFF_NAME)
+
+    @property
+    def main_stuff_as_number(self) -> NumberContent:
+        """Get main stuff content as NumberContent if applicable."""
+        return self.get_stuff_as_number(name=MAIN_STUFF_NAME)
+
+    @property
+    def main_stuff_as_html(self) -> HtmlContent:
+        """Get main stuff content as HtmlContent if applicable."""
+        return self.get_stuff_as_html(name=MAIN_STUFF_NAME)
+
+    @property
+    def main_stuff_as_mermaid(self) -> MermaidContent:
+        """Get main stuff content as MermaidContent if applicable."""
+        return self.get_stuff_as_mermaid(name=MAIN_STUFF_NAME)
+
+    ################################################################################################
+    # Serialization
+    ################################################################################################
+
+    def smart_dump(self) -> dict[str, Any]:
+        """Serialize the working memory as a dictionary."""
+        return self.model_dump(serialize_as_any=True)

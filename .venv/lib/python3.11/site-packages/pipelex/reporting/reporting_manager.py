@@ -1,0 +1,123 @@
+from pydantic import Field, RootModel
+from typing_extensions import override
+
+from pipelex import log
+from pipelex.cogt.exceptions import ReportingManagerError
+from pipelex.cogt.inference.inference_job_abstract import InferenceJobAbstract
+from pipelex.cogt.llm.llm_job import LLMJob
+from pipelex.cogt.llm.llm_report import LLMTokenCostReport, LLMTokensUsage
+from pipelex.cogt.usage.cost_registry import CostRegistry
+from pipelex.config import get_config
+from pipelex.pipeline.pipeline_models import SpecialPipelineId
+from pipelex.reporting.reporting_protocol import ReportingProtocol
+from pipelex.tools.misc.file_utils import ensure_path, get_incremental_file_path
+from pipelex.tools.typing.pydantic_utils import empty_list_factory_of
+
+LLMUsageRegistryRoot = list[LLMTokensUsage]
+
+
+class UsageRegistry(RootModel[LLMUsageRegistryRoot]):
+    root: LLMUsageRegistryRoot = Field(default_factory=empty_list_factory_of(LLMTokensUsage))
+
+    def get_current_tokens_usage(self) -> LLMUsageRegistryRoot:
+        return self.root
+
+    def add_tokens_usage(self, llm_tokens_usage: LLMTokensUsage):
+        self.root.append(llm_tokens_usage)
+
+
+class ReportingManager(ReportingProtocol):
+    def __init__(self):
+        self._reporting_config = get_config().pipelex.reporting_config
+        self._usage_registries: dict[str, UsageRegistry] = {}
+
+    ############################################################
+    # Manager lifecycle
+    ############################################################
+
+    @override
+    def setup(self):
+        self._usage_registries.clear()
+        self._usage_registries[SpecialPipelineId.UNTITLED] = UsageRegistry()
+
+    @override
+    def teardown(self):
+        self._usage_registries.clear()
+
+    ############################################################
+    # Private methods
+    ############################################################
+
+    def _get_registry(self, pipeline_run_id: str) -> UsageRegistry:
+        if pipeline_run_id not in self._usage_registries:
+            msg = f"Registry for pipeline '{pipeline_run_id}' does not exist"
+            raise ReportingManagerError(msg)
+        return self._usage_registries[pipeline_run_id]
+
+    def _report_llm_job(self, llm_job: LLMJob):
+        llm_tokens_usage = llm_job.job_report.llm_tokens_usage
+
+        if not llm_tokens_usage:
+            log.warning("LLM job has no llm_tokens_usage")
+            return
+
+        llm_token_cost_report: LLMTokenCostReport | None = None
+
+        if self._reporting_config.is_log_costs_to_console:
+            llm_token_cost_report = CostRegistry.complete_cost_report(llm_tokens_usage=llm_tokens_usage)
+
+        pipeline_run_id = llm_job.job_metadata.pipeline_run_id
+        self._get_registry(pipeline_run_id).add_tokens_usage(llm_tokens_usage)
+
+        if self._reporting_config.is_log_costs_to_console:
+            log.verbose(llm_token_cost_report, title="Token Cost report")
+
+    ############################################################
+    # ReportingProtocol
+    ############################################################
+
+    @override
+    def open_registry(self, pipeline_run_id: str):
+        if pipeline_run_id in self._usage_registries:
+            msg = f"Registry for pipeline '{pipeline_run_id}' already exists"
+            raise ReportingManagerError(msg)
+        self._usage_registries[pipeline_run_id] = UsageRegistry()
+
+    @override
+    def report_inference_job(self, inference_job: InferenceJobAbstract):
+        log.verbose(f"Inference job '{inference_job.job_metadata.unit_job_id}' completed in {inference_job.job_metadata.duration:.2f} seconds")
+        if not isinstance(inference_job, LLMJob):
+            # ReportingManager does not support reporting for other types of inference jobs yet
+            # TODO: add support for other types of inference jobs
+            return
+        llm_job: LLMJob = inference_job
+        self._report_llm_job(llm_job=llm_job)
+
+    @override
+    def generate_report(self, pipeline_run_id: str | None = None):
+        cost_report_file_path: str | None = None
+        if self._reporting_config.is_generate_cost_report_file_enabled:
+            ensure_path(self._reporting_config.cost_report_dir_path)
+            cost_report_file_path = get_incremental_file_path(
+                base_path=self._reporting_config.cost_report_dir_path,
+                base_name=self._reporting_config.cost_report_base_name,
+                extension=self._reporting_config.cost_report_extension,
+            )
+
+        registries_to_process: dict[str, UsageRegistry] = {}
+        if pipeline_run_id:
+            registries_to_process = {pipeline_run_id: self._get_registry(pipeline_run_id)}
+        else:
+            registries_to_process = self._usage_registries
+
+        for run_id, registry in registries_to_process.items():
+            CostRegistry.generate_report(
+                pipeline_run_id=run_id,
+                llm_tokens_usages=registry.get_current_tokens_usage(),
+                unit_scale=self._reporting_config.cost_report_unit_scale,
+                cost_report_file_path=cost_report_file_path,
+            )
+
+    @override
+    def close_registry(self, pipeline_run_id: str):
+        self._usage_registries.pop(pipeline_run_id)

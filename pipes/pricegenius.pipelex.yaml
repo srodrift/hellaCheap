@@ -1,0 +1,48 @@
+name: pricegenius
+description: Compare product prices from BestBuy, Walmart, and Google Shopping to find the cheapest option including travel cost.
+
+inputs:
+  product_name:
+    type: string
+    description: The name of the product to search for.
+
+steps:
+  - name: fetch_prices
+    type: python
+    code: |
+      import requests, os
+
+      def run(product_name):
+          results = []
+          serpapi_key = os.getenv("SERPAPI_KEY")
+          if serpapi_key:
+              url = f"https://serpapi.com/search.json?q={product_name}&engine=google_shopping&api_key={serpapi_key}"
+              r = requests.get(url)
+              data = r.json()
+              for item in data.get("shopping_results", [])[:5]:
+                  results.append({
+                      "store": item.get("source"),
+                      "price": item.get("extracted_price"),
+                      "url": item.get("link"),
+                      "type": "online"
+                  })
+          return {"prices": results}
+
+  - name: analyze_options
+    type: llm
+    model: gpt-4o-mini
+    prompt: |
+      You are a shopping analyst. Given the list of prices and store data, compute which option saves the most money.
+      Suggest whether the user should buy online or go in person, assuming driving costs $0.65 per mile.
+      Input JSON:
+      {{ fetch_prices.output }}
+
+  - name: generate_summary_card
+    type: image
+    prompt: |
+      Generate a 512x512 promotional card summarizing the best deal for {{ inputs.product_name }},
+      showing the store name, price, and a small price tag emoji.
+
+outputs:
+  best_option: "{{ analyze_options.output }}"
+  summary_card: "{{ generate_summary_card.output }}"

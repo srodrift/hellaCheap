@@ -1,0 +1,2 @@
+[console_scripts]
+pipelex = pipelex.cli._cli:app

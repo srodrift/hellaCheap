@@ -1,0 +1,1450 @@
+{
+    "root": {
+        "brief": {
+            "stuff_code": "fznSM",
+            "stuff_name": "brief",
+            "concept": {
+                "code": "Text",
+                "domain": "native",
+                "description": "A text",
+                "structure_class_name": "TextContent",
+                "refines": null
+            },
+            "content": {
+                "text": "Create a Pipelex workflow named 'pricegenius' that:\n- takes a product_name string as input\n- uses python steps to query live prices from:\n    * Best Buy Product API (https://api.bestbuy.com/v1/products)\n    * Walmart Product API (https://developer.api.walmart.com/)\n    * SerpAPI Google Shopping (https://serpapi.com/search)\n- parses the JSON into a list of {store, price, url, type}\n- fetches driving distance from San Francisco downtown to each physical store using Google Maps Distance Matrix API\n- computes effective_cost = price + (distance_miles * 0.65)\n- calls an LLM step to:\n    * rank options by effective_cost\n    * explain which option saves more and why\n    * suggest 'buy online' or 'go in person'\n- finally generates a 512x512 PNG summary card with the best option, price difference, and logo\n- outputs a JSON:\n    {\n      best_option,\n      reasoning,\n      comparison_table:[{store,price,distance,effective_cost}],\n      summary_card\n    }"
+            }
+        },
+        "plan_draft": {
+            "stuff_code": "A8SnJ",
+            "stuff_name": "plan_draft",
+            "concept": {
+                "code": "PlanDraft",
+                "domain": "builder",
+                "description": "Natural-language pipeline plan text describing sequences, inputs, outputs.",
+                "structure_class_name": "TextContent",
+                "refines": null
+            },
+            "content": {
+                "text": "# Pipeline Plan: pricegenius\n\n## Initial Inputs\n- product_name\n\n## Pipeline Structure\n\n### PARALLEL: Fetch prices from all sources\nExecutes three price fetching pipes concurrently.\n\n**Pipe: fetch_bestbuy_prices**\n- Queries Best Buy Product API using product_name\n- Inputs: product_name\n- Output: bestbuy_raw_response\n\n**Pipe: fetch_walmart_prices**\n- Queries Walmart Product API using product_name\n- Inputs: product_name\n- Output: walmart_raw_response\n\n**Pipe: fetch_serpapi_prices**\n- Queries SerpAPI Google Shopping using product_name\n- Inputs: product_name\n- Output: serpapi_raw_response\n\n### Pipe: parse_bestbuy_results\n- Parses bestbuy_raw_response JSON into structured list\n- Inputs: bestbuy_raw_response\n- Output: bestbuy_offers (structured list of {store, price, url, type})\n\n### Pipe: parse_walmart_results\n- Parses walmart_raw_response JSON into structured list\n- Inputs: walmart_raw_response\n- Output: walmart_offers (structured list of {store, price, url, type})\n\n### Pipe: parse_serpapi_results\n- Parses serpapi_raw_response JSON into structured list\n- Inputs: serpapi_raw_response\n- Output: serpapi_offers (structured list of {store, price, url, type})\n\n### Pipe: merge_all_offers\n- Combines all parsed offers into single list\n- Inputs: bestbuy_offers, walmart_offers, serpapi_offers\n- Output: all_offers\n\n### BATCH: Enrich each offer with distance\nApplies distance calculation to each offer in all_offers.\n\n**Pipe: calculate_distance**\n- Queries Google Maps Distance Matrix API from San Francisco downtown to store location (only for physical stores)\n- Computes effective_cost = price + (distance_miles * 0.65)\n- Inputs: offer\n- Output: enriched_offer (structured {store, price, url, type, distance_miles, effective_cost})\n\n### Pipe: rank_and_analyze\n- LLM analyzes all enriched_offer items\n- Ranks by effective_cost\n- Explains which option saves more and why\n- Suggests 'buy online' or 'go in person'\n- Inputs: all_offers, enriched_offer (all from batch), product_name\n- Output: analysis (structured {best_option, reasoning, buy_recommendation})\n\n### Pipe: prepare_comparison_table\n- Formats enriched_offer items into comparison table structure\n- Inputs: enriched_offer (all from batch)\n- Output: comparison_table\n\n### Pipe: generate_card_prompt\n- LLM creates image generation prompt for summary card\n- Includes best option, price difference, and instructions for logo\n- Inputs: analysis, comparison_table, product_name\n- Output: card_prompt\n\n### Pipe: generate_summary_card\n- IMG_GEN creates 512x512 PNG summary card\n- Inputs: card_prompt\n- Output: summary_card\n\n### Pipe: assemble_final_output\n- Combines all results into final JSON structure\n- Inputs: analysis, comparison_table, summary_card\n- Output: final_result (structured {best_option, reasoning, comparison_table, summary_card})"
+            }
+        },
+        "concept_drafts": {
+            "stuff_code": "Wzzh6",
+            "stuff_name": "concept_drafts",
+            "concept": {
+                "code": "ConceptDrafts",
+                "domain": "builder",
+                "description": "Textual draft of the concepts to create.",
+                "structure_class_name": "TextContent",
+                "refines": null
+            },
+            "content": {
+                "text": "### Concept ApiResponse\nRaw JSON response from an external API endpoint.\nrefines: Text\n\n### Concept ProductOffer\nA single product purchasing option from a retailer.\n\n**Structure:**\n- store\n  - description: Name of the retailer or store\n  - type: text\n  - required: true\n- price\n  - description: Product price in dollars\n  - type: number\n  - required: true\n- url\n  - description: Link to the product page\n  - type: text\n  - required: true\n- type\n  - description: Purchase type (online or in-store)\n  - type: text\n  - required: true\n\n### Concept EnrichedProductOffer\nA product purchasing option with calculated distance and effective cost.\n\n**Structure:**\n- store\n  - description: Name of the retailer or store\n  - type: text\n  - required: true\n- price\n  - description: Product price in dollars\n  - type: number\n  - required: true\n- url\n  - description: Link to the product page\n  - type: text\n  - required: true\n- type\n  - description: Purchase type (online or in-store)\n  - type: text\n  - required: true\n- distance_miles\n  - description: Driving distance from San Francisco downtown to physical store location\n  - type: number\n- effective_cost\n  - description: Total cost including price and travel cost (price + distance_miles * 0.65)\n  - type: number\n  - required: true\n\n### Concept PurchaseAnalysis\nLLM-generated analysis of product purchasing options with recommendation.\n\n**Structure:**\n- best_option\n  - description: The recommended store and purchase method\n  - type: text\n  - required: true\n- reasoning\n  - description: Explanation of why this option saves more money\n  - type: text\n  - required: true\n- buy_recommendation\n  - description: Suggestion to buy online or go in person\n  - type: text\n  - required: true\n\n### Concept ComparisonTable\nStructured table comparing all product offers with their costs and distances.\nrefines: Text\n\n### Concept ImagePrompt\nText prompt for generating an image using an image generation model.\nrefines: Text\n\n### Concept PriceGeniusResult\nFinal output containing the best purchasing option, analysis, comparison data, and visual summary.\n\n**Structure:**\n- best_option\n  - description: The recommended store and purchase method\n  - type: text\n  - required: true\n- reasoning\n  - description: Explanation of the recommendation\n  - type: text\n  - required: true\n- comparison_table\n  - description: Table of all options with store, price, distance, and effective cost\n  - type: text\n  - required: true\n- summary_card\n  - description: Visual summary card image\n  - type: text\n  - required: true"
+            }
+        },
+        "concept_specs": {
+            "stuff_code": "3fUQd",
+            "stuff_name": "concept_specs",
+            "concept": {
+                "code": "ConceptSpec",
+                "domain": "concept",
+                "description": "A specification for a concept including its code, description, and a structure draft as plain text.",
+                "structure_class_name": "ConceptSpec",
+                "refines": null
+            },
+            "content": {
+                "items": [
+                    {
+                        "the_concept_code": "ApiResponse",
+                        "description": "Raw JSON response from an external API endpoint.",
+                        "structure": null,
+                        "refines": "Text"
+                    },
+                    {
+                        "the_concept_code": "ProductOffer",
+                        "description": "A single product purchasing option from a retailer.",
+                        "structure": {
+                            "store": {
+                                "the_field_name": "store",
+                                "description": "Name of the retailer or store",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "price": {
+                                "the_field_name": "price",
+                                "description": "Product price in dollars",
+                                "type": "number",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "url": {
+                                "the_field_name": "url",
+                                "description": "Link to the product page",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "type": {
+                                "the_field_name": "type",
+                                "description": "Purchase type (online or in-store)",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            }
+                        },
+                        "refines": null
+                    },
+                    {
+                        "the_concept_code": "EnrichedProductOffer",
+                        "description": "A product purchasing option with calculated distance and effective cost.",
+                        "structure": {
+                            "store": {
+                                "the_field_name": "store",
+                                "description": "Name of the retailer or store",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "price": {
+                                "the_field_name": "price",
+                                "description": "Product price in dollars",
+                                "type": "number",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "url": {
+                                "the_field_name": "url",
+                                "description": "Link to the product page",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "type": {
+                                "the_field_name": "type",
+                                "description": "Purchase type (online or in-store)",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "distance_miles": {
+                                "the_field_name": "distance_miles",
+                                "description": "Driving distance from San Francisco downtown to physical store location",
+                                "type": "number",
+                                "required": null,
+                                "default_value": null
+                            },
+                            "effective_cost": {
+                                "the_field_name": "effective_cost",
+                                "description": "Total cost including price and travel cost (price + distance_miles * 0.65)",
+                                "type": "number",
+                                "required": true,
+                                "default_value": null
+                            }
+                        },
+                        "refines": null
+                    },
+                    {
+                        "the_concept_code": "PurchaseAnalysis",
+                        "description": "LLM-generated analysis of product purchasing options with recommendation.",
+                        "structure": {
+                            "best_option": {
+                                "the_field_name": "best_option",
+                                "description": "The recommended store and purchase method",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "reasoning": {
+                                "the_field_name": "reasoning",
+                                "description": "Explanation of why this option saves more money",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "buy_recommendation": {
+                                "the_field_name": "buy_recommendation",
+                                "description": "Suggestion to buy online or go in person",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            }
+                        },
+                        "refines": null
+                    },
+                    {
+                        "the_concept_code": "ComparisonTable",
+                        "description": "Structured table comparing all product offers with their costs and distances.",
+                        "structure": null,
+                        "refines": "Text"
+                    },
+                    {
+                        "the_concept_code": "ImagePrompt",
+                        "description": "Text prompt for generating an image using an image generation model.",
+                        "structure": null,
+                        "refines": "Text"
+                    },
+                    {
+                        "the_concept_code": "PriceGeniusResult",
+                        "description": "Final output containing the best purchasing option, analysis, comparison data, and visual summary.",
+                        "structure": {
+                            "best_option": {
+                                "the_field_name": "best_option",
+                                "description": "The recommended store and purchase method",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "reasoning": {
+                                "the_field_name": "reasoning",
+                                "description": "Explanation of the recommendation",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "comparison_table": {
+                                "the_field_name": "comparison_table",
+                                "description": "Table of all options with store, price, distance, and effective cost",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "summary_card": {
+                                "the_field_name": "summary_card",
+                                "description": "Visual summary card image",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            }
+                        },
+                        "refines": null
+                    }
+                ]
+            }
+        },
+        "flow_draft": {
+            "stuff_code": "UYzYq",
+            "stuff_name": "flow_draft",
+            "concept": {
+                "code": "FlowDraft",
+                "domain": "builder",
+                "description": "Draft of the flow of the pipeline.",
+                "structure_class_name": "TextContent",
+                "refines": null
+            },
+            "content": {
+                "text": "# Pipelex Workflow: pricegenius\n\n## Pipeline Inputs\n- `product_name` (Text)\n\n---\n\n## Pipe Definitions\n\n### Pipe: fetch_bestbuy_prices\n```yaml\ntype: PipeExtract\ndescription: Query Best Buy Product API for product prices\ninputs:\n  product_name: Text\nresult: bestbuy_raw_response\noutput: ApiResponse\n```\n\n### Pipe: fetch_walmart_prices\n```yaml\ntype: PipeExtract\ndescription: Query Walmart Product API for product prices\ninputs:\n  product_name: Text\nresult: walmart_raw_response\noutput: ApiResponse\n```\n\n### Pipe: fetch_serpapi_prices\n```yaml\ntype: PipeExtract\ndescription: Query SerpAPI Google Shopping for product prices\ninputs:\n  product_name: Text\nresult: serpapi_raw_response\noutput: ApiResponse\n```\n\n### Pipe: parse_bestbuy_results\n```yaml\ntype: PipeLLM\ndescription: Parse Best Buy API response into structured product offers\ninputs:\n  bestbuy_raw_response: ApiResponse\nresult: bestbuy_offers\noutput: ProductOffer[]\n```\n\n### Pipe: parse_walmart_results\n```yaml\ntype: PipeLLM\ndescription: Parse Walmart API response into structured product offers\ninputs:\n  walmart_raw_response: ApiResponse\nresult: walmart_offers\noutput: ProductOffer[]\n```\n\n### Pipe: parse_serpapi_results\n```yaml\ntype: PipeLLM\ndescription: Parse SerpAPI response into structured product offers\ninputs:\n  serpapi_raw_response: ApiResponse\nresult: serpapi_offers\noutput: ProductOffer[]\n```\n\n### Pipe: merge_all_offers\n```yaml\ntype: PipeLLM\ndescription: Combine all parsed offers from different sources into a single list\ninputs:\n  bestbuy_offers: ProductOffer[]\n  walmart_offers: ProductOffer[]\n  serpapi_offers: ProductOffer[]\nresult: all_offers\noutput: ProductOffer[]\n```\n\n### Pipe: calculate_distance_and_cost\n```yaml\ntype: PipeLLM\ndescription: Calculate driving distance from SF downtown to store and compute effective cost\ninputs:\n  offer: ProductOffer\nresult: enriched_offer\noutput: EnrichedProductOffer\n```\n\n### Pipe: rank_and_analyze\n```yaml\ntype: PipeLLM\ndescription: Analyze all enriched offers, rank by effective cost, and provide recommendation\ninputs:\n  enriched_offers: EnrichedProductOffer[]\n  product_name: Text\nresult: analysis\noutput: PurchaseAnalysis\n```\n\n### Pipe: prepare_comparison_table\n```yaml\ntype: PipeLLM\ndescription: Format enriched offers into a structured comparison table\ninputs:\n  enriched_offers: EnrichedProductOffer[]\nresult: comparison_table\noutput: ComparisonTable\n```\n\n### Pipe: generate_card_prompt\n```yaml\ntype: PipeLLM\ndescription: Create image generation prompt for summary card with best option and price difference\ninputs:\n  analysis: PurchaseAnalysis\n  comparison_table: ComparisonTable\n  product_name: Text\nresult: card_prompt\noutput: ImagePrompt\n```\n\n### Pipe: generate_summary_card\n```yaml\ntype: PipeImgGen\ndescription: Generate 512x512 PNG summary card visualizing the best purchasing option\ninputs:\n  card_prompt: ImagePrompt\nresult: summary_card\noutput: Image\n```\n\n### Pipe: assemble_final_output\n```yaml\ntype: PipeLLM\ndescription: Combine analysis, comparison table, and summary card into final structured result\ninputs:\n  analysis: PurchaseAnalysis\n  comparison_table: ComparisonTable\n  summary_card: Image\nresult: final_result\noutput: PriceGeniusResult\n```\n\n---\n\n## Controller Definitions\n\n### Controller: fetch_all_prices_parallel\n```yaml\ntype: PipeParallel\ndescription: Fetch prices from all three sources concurrently\ninputs:\n  product_name: Text\nresult: all_raw_responses\noutput: ApiResponse[]\nparallels:\n  - pipe: fetch_bestbuy_prices\n    result: bestbuy_raw_response\n  - pipe: fetch_walmart_prices\n    result: walmart_raw_response\n  - pipe: fetch_serpapi_prices\n    result: serpapi_raw_response\nadd_each_output: true\ncombined_output: null\n```\n\n### Controller: parse_all_results_sequence\n```yaml\ntype: PipeSequence\ndescription: Parse all API responses into structured offers sequentially\ninputs:\n  bestbuy_raw_response: ApiResponse\n  walmart_raw_response: ApiResponse\n  serpapi_raw_response: ApiResponse\nresult: parsed_results\noutput: ProductOffer[]\nsteps:\n  - pipe: parse_bestbuy_results\n    result: bestbuy_offers\n  - pipe: parse_walmart_results\n    result: walmart_offers\n  - pipe: parse_serpapi_results\n    result: serpapi_offers\n  - pipe: merge_all_offers\n    result: all_offers\n```\n\n### Controller: enrich_offers_batch\n```yaml\ntype: PipeBatch\ndescription: Enrich each offer with distance and effective cost calculation\ninputs:\n  all_offers: ProductOffer[]\nresult: enriched_offers\noutput: EnrichedProductOffer[]\nbranch_pipe_code: calculate_distance_and_cost\ninput_list_name: all_offers\ninput_item_name: offer\n```\n\n### Controller: analyze_and_visualize_sequence\n```yaml\ntype: PipeSequence\ndescription: Analyze offers, prepare comparison, and generate visual summary\ninputs:\n  enriched_offers: EnrichedProductOffer[]\n  product_name: Text\nresult: visualization_complete\noutput: Image\nsteps:\n  - pipe: rank_and_analyze\n    result: analysis\n  - pipe: prepare_comparison_table\n    result: comparison_table\n  - pipe: generate_card_prompt\n    result: card_prompt\n  - pipe: generate_summary_card\n    result: summary_card\n```\n\n---\n\n## Main Pipeline Controller\n# This is the main orchestrator pipe for the entire workflow\n\n### Controller: pricegenius_workflow\n```yaml\ntype: PipeSequence\ndescription: Complete price comparison workflow from fetching to final output generation\ninputs:\n  product_name: Text\nresult: pricegenius_result\noutput: PriceGeniusResult\nsteps:\n  - pipe: fetch_all_prices_parallel\n    result: all_raw_responses\n  - pipe: parse_all_results_sequence\n    result: all_offers\n  - pipe: enrich_offers_batch\n    result: enriched_offers\n  - pipe: analyze_and_visualize_sequence\n    result: summary_card\n  - pipe: assemble_final_output\n    result: final_result\n```\n\n---\n\n## Variables Recap\n\n| Variable | Description | Concept | Multiplicity | Refines |\n|----------|-------------|---------|--------------|---------|\n| `product_name` | Product to search for | Text | Single | Native |\n| `bestbuy_raw_response` | Raw Best Buy API response | ApiResponse | Single | Text |\n| `walmart_raw_response` | Raw Walmart API response | ApiResponse | Single | Text |\n| `serpapi_raw_response` | Raw SerpAPI response | ApiResponse | Single | Text |\n| `all_raw_responses` | All raw API responses combined | ApiResponse | List [] | Text |\n| `bestbuy_offers` | Parsed Best Buy offers | ProductOffer | List [] | - |\n| `walmart_offers` | Parsed Walmart offers | ProductOffer | List [] | - |\n| `serpapi_offers` | Parsed SerpAPI offers | ProductOffer | List [] | - |\n| `all_offers` | Merged offers from all sources | ProductOffer | List [] | - |\n| `offer` | Individual offer (batch item) | ProductOffer | Single | - |\n| `enriched_offer` | Offer with distance and cost | EnrichedProductOffer | Single | - |\n| `enriched_offers` | All enriched offers | EnrichedProductOffer | List [] | - |\n| `analysis` | LLM purchase recommendation | PurchaseAnalysis | Single | - |\n| `comparison_table` | Formatted comparison table | ComparisonTable | Single | Text |\n| `card_prompt` | Image generation prompt | ImagePrompt | Single | Text |\n| `summary_card` | Generated summary image | Image | Single | Native |\n| `final_result` | Complete workflow output | PriceGeniusResult | Single | - |\n| `parsed_results` | Intermediate parsing result | ProductOffer | List [] | - |\n| `visualization_complete` | Intermediate visualization result | Image | Single | Native |\n| `pricegenius_result` | Final pipeline result | PriceGeniusResult | Single | - |"
+            }
+        },
+        "prepared_flow": {
+            "stuff_code": "VthmD",
+            "stuff_name": "prepared_flow",
+            "concept": {
+                "code": "FlowDraft",
+                "domain": "builder",
+                "description": "Draft of the flow of the pipeline.",
+                "structure_class_name": "TextContent",
+                "refines": null
+            },
+            "content": {
+                "text": "# Flow Review\n\nLet me narrate the flow step by step:\n\n1. **Input**: The workflow starts with `product_name` (Text)\n2. **Parallel Fetch**: `fetch_all_prices_parallel` controller fetches prices from Best Buy, Walmart, and SerpAPI concurrently\n3. **Sequential Parse**: `parse_all_results_sequence` controller parses each API response (bestbuy, walmart, serpapi) into structured offers, then merges them into `all_offers`\n4. **Batch Enrich**: `enrich_offers_batch` controller processes each offer through `calculate_distance_and_cost` to add distance and effective cost\n5. **Analyze & Visualize**: `analyze_and_visualize_sequence` controller ranks offers, prepares comparison table, generates card prompt, and creates the summary image\n6. **Assemble Output**: `assemble_final_output` combines everything into the final result\n7. **Main Controller**: `pricegenius_workflow` orchestrates all these steps sequentially\n\n## Issues Found:\n\n1. **Critical Issue with `calculate_distance_and_cost`**: This pipe is typed as `PipeLLM` but the brief explicitly requires using \"Google Maps Distance Matrix API\" to fetch driving distances. This should be a `PipeExtract` (or Python step) to call the actual API, not an LLM hallucinating distances.\n\n2. **`PipeImgGen` input issue**: The `generate_summary_card` pipe receives `card_prompt` which is typed as `ImagePrompt` (a structured concept), but `PipeImgGen` requires a Text input. The `generate_card_prompt` pipe already outputs `ImagePrompt`, so we need to ensure this is actually Text or add a conversion step.\n\n3. **Brief requirement mismatch**: The brief asks for \"python steps\" to query APIs, but the draft uses `PipeExtract`. This is acceptable if `PipeExtract` is the Pipelex equivalent, but the `calculate_distance_and_cost` should definitely call the Google Maps API, not use LLM.\n\nThe flow has been checked and fixed:\n\n```\n# Pipelex Workflow: pricegenius\n\n## Pipeline Inputs\n- `product_name` (Text)\n\n---\n\n## Pipe Definitions\n\n### Pipe: fetch_bestbuy_prices\n```yaml\ntype: PipeExtract\ndescription: Query Best Buy Product API for product prices\ninputs:\n  product_name: Text\nresult: bestbuy_raw_response\noutput: ApiResponse\n```\n\n### Pipe: fetch_walmart_prices\n```yaml\ntype: PipeExtract\ndescription: Query Walmart Product API for product prices\ninputs:\n  product_name: Text\nresult: walmart_raw_response\noutput: ApiResponse\n```\n\n### Pipe: fetch_serpapi_prices\n```yaml\ntype: PipeExtract\ndescription: Query SerpAPI Google Shopping for product prices\ninputs:\n  product_name: Text\nresult: serpapi_raw_response\noutput: ApiResponse\n```\n\n### Pipe: parse_bestbuy_results\n```yaml\ntype: PipeLLM\ndescription: Parse Best Buy API response into structured product offers\ninputs:\n  bestbuy_raw_response: ApiResponse\nresult: bestbuy_offers\noutput: ProductOffer[]\n```\n\n### Pipe: parse_walmart_results\n```yaml\ntype: PipeLLM\ndescription: Parse Walmart API response into structured product offers\ninputs:\n  walmart_raw_response: ApiResponse\nresult: walmart_offers\noutput: ProductOffer[]\n```\n\n### Pipe: parse_serpapi_results\n```yaml\ntype: PipeLLM\ndescription: Parse SerpAPI response into structured product offers\ninputs:\n  serpapi_raw_response: ApiResponse\nresult: serpapi_offers\noutput: ProductOffer[]\n```\n\n### Pipe: merge_all_offers\n```yaml\ntype: PipeLLM\ndescription: Combine all parsed offers from different sources into a single list\ninputs:\n  bestbuy_offers: ProductOffer[]\n  walmart_offers: ProductOffer[]\n  serpapi_offers: ProductOffer[]\nresult: all_offers\noutput: ProductOffer[]\n```\n\n### Pipe: fetch_store_distance\n```yaml\ntype: PipeExtract\ndescription: Fetch driving distance from SF downtown to store using Google Maps Distance Matrix API\ninputs:\n  offer: ProductOffer\nresult: distance_response\noutput: DistanceResponse\n```\n\n### Pipe: calculate_effective_cost\n```yaml\ntype: PipeLLM\ndescription: Parse distance response and compute effective cost (price + distance_miles * 0.65)\ninputs:\n  offer: ProductOffer\n  distance_response: DistanceResponse\nresult: enriched_offer\noutput: EnrichedProductOffer\n```\n\n### Pipe: rank_and_analyze\n```yaml\ntype: PipeLLM\ndescription: Analyze all enriched offers, rank by effective cost, and provide recommendation\ninputs:\n  enriched_offers: EnrichedProductOffer[]\n  product_name: Text\nresult: analysis\noutput: PurchaseAnalysis\n```\n\n### Pipe: prepare_comparison_table\n```yaml\ntype: PipeLLM\ndescription: Format enriched offers into a structured comparison table\ninputs:\n  enriched_offers: EnrichedProductOffer[]\nresult: comparison_table\noutput: ComparisonTable\n```\n\n### Pipe: generate_card_prompt\n```yaml\ntype: PipeLLM\ndescription: Create image generation prompt for summary card with best option and price difference\ninputs:\n  analysis: PurchaseAnalysis\n  comparison_table: ComparisonTable\n  product_name: Text\nresult: card_prompt\noutput: Text\n```\n\n### Pipe: generate_summary_card\n```yaml\ntype: PipeImgGen\ndescription: Generate 512x512 PNG summary card visualizing the best purchasing option\ninputs:\n  card_prompt: Text\nresult: summary_card\noutput: Image\n```\n\n### Pipe: assemble_final_output\n```yaml\ntype: PipeLLM\ndescription: Combine analysis, comparison table, and summary card into final structured result\ninputs:\n  analysis: PurchaseAnalysis\n  comparison_table: ComparisonTable\n  summary_card: Image\nresult: final_result\noutput: PriceGeniusResult\n```\n\n---\n\n## Controller Definitions\n\n### Controller: fetch_all_prices_parallel\n```yaml\ntype: PipeParallel\ndescription: Fetch prices from all three sources concurrently\ninputs:\n  product_name: Text\nresult: all_raw_responses\noutput: ApiResponse[]\nparallels:\n  - pipe: fetch_bestbuy_prices\n    result: bestbuy_raw_response\n  - pipe: fetch_walmart_prices\n    result: walmart_raw_response\n  - pipe: fetch_serpapi_prices\n    result: serpapi_raw_response\nadd_each_output: true\ncombined_output: null\n```\n\n### Controller: parse_all_results_sequence\n```yaml\ntype: PipeSequence\ndescription: Parse all API responses into structured offers sequentially\ninputs:\n  bestbuy_raw_response: ApiResponse\n  walmart_raw_response: ApiResponse\n  serpapi_raw_response: ApiResponse\nresult: parsed_results\noutput: ProductOffer[]\nsteps:\n  - pipe: parse_bestbuy_results\n    result: bestbuy_offers\n  - pipe: parse_walmart_results\n    result: walmart_offers\n  - pipe: parse_serpapi_results\n    result: serpapi_offers\n  - pipe: merge_all_offers\n    result: all_offers\n```\n\n### Controller: enrich_offers_batch\n```yaml\ntype: PipeBatch\ndescription: Enrich each offer with distance from Google Maps API and effective cost calculation\ninputs:\n  all_offers: ProductOffer[]\nresult: enriched_offers\noutput: EnrichedProductOffer[]\nbranch_pipe_code: enrich_single_offer\ninput_list_name: all_offers\ninput_item_name: offer\n```\n\n### Controller: enrich_single_offer\n```yaml\ntype: PipeSequence\ndescription: Fetch distance and calculate effective cost for a single offer\ninputs:\n  offer: ProductOffer\nresult: enriched_offer\noutput: EnrichedProductOffer\nsteps:\n  - pipe: fetch_store_distance\n    result: distance_response\n  - pipe: calculate_effective_cost\n    result: enriched_offer\n```\n\n### Controller: analyze_and_visualize_sequence\n```yaml\ntype: PipeSequence\ndescription: Analyze offers, prepare comparison, and generate visual summary\ninputs:\n  enriched_offers: EnrichedProductOffer[]\n  product_name: Text\nresult: visualization_complete\noutput: Image\nsteps:\n  - pipe: rank_and_analyze\n    result: analysis\n  - pipe: prepare_comparison_table\n    result: comparison_table\n  - pipe: generate_card_prompt\n    result: card_prompt\n  - pipe: generate_summary_card\n    result: summary_card\n```\n\n---\n\n## Main Pipeline Controller\n# This is the main orchestrator pipe for the entire workflow\n\n### Controller: pricegenius_workflow\n```yaml\ntype: PipeSequence\ndescription: Complete price comparison workflow from fetching to final output generation\ninputs:\n  product_name: Text\nresult: pricegenius_result\noutput: PriceGeniusResult\nsteps:\n  - pipe: fetch_all_prices_parallel\n    result: all_raw_responses\n  - pipe: parse_all_results_sequence\n    result: all_offers\n  - pipe: enrich_offers_batch\n    result: enriched_offers\n  - pipe: analyze_and_visualize_sequence\n    result: summary_card\n  - pipe: assemble_final_output\n    result: final_result\n```\n\n---\n\n## Variables Recap\n\n| Variable | Description | Concept | Multiplicity | Refines |\n|----------|-------------|---------|--------------|---------|\n| `product_name` | Product to search for | Text | Single | Native |\n| `bestbuy_raw_response` | Raw Best Buy API response | ApiResponse | Single | Text |\n| `walmart_raw_response` | Raw Walmart API response | ApiResponse | Single | Text |\n| `serpapi_raw_response` | Raw SerpAPI response | ApiResponse | Single | Text |\n| `all_raw_responses` | All raw API responses combined | ApiResponse | List [] | Text |\n| `bestbuy_offers` | Parsed Best Buy offers | ProductOffer | List [] | - |\n| `walmart_offers` | Parsed Walmart offers | ProductOffer | List [] | - |\n| `serpapi_offers` | Parsed SerpAPI offers | ProductOffer | List [] | - |\n| `all_offers` | Merged offers from all sources | ProductOffer | List [] | - |\n| `offer` | Individual offer (batch item) | ProductOffer | Single | - |\n| `distance_response` | Google Maps distance API response | DistanceResponse | Single | Text |\n| `enriched_offer` | Offer with distance and cost | EnrichedProductOffer | Single | - |\n| `enriched_offers` | All enriched offers | EnrichedProductOffer | List [] | - |\n| `analysis` | LLM purchase recommendation | PurchaseAnalysis | Single | - |\n| `comparison_table` | Formatted comparison table | ComparisonTable | Single | Text |\n| `card_prompt` | Image generation prompt | Text | Single | Native |\n| `summary_card` | Generated summary image | Image | Single | Native |\n| `final_result` | Complete workflow output | PriceGeniusResult | Single | - |\n| `parsed_results` | Intermediate parsing result | ProductOffer | List [] | - |\n| `visualization_complete` | Intermediate visualization result | Image | Single | Native |\n| `pricegenius_result` | Final pipeline result | PriceGeniusResult | Single | - |\n```"
+            }
+        },
+        "pipe_signatures": {
+            "stuff_code": "m39KS",
+            "stuff_name": "pipe_signatures",
+            "concept": {
+                "code": "PipeSignature",
+                "domain": "pipe_design",
+                "description": "A pipe contract which says what the pipe does, not how it does it: code (the pipe code in snake_case), type, description, inputs, output.",
+                "structure_class_name": "PipeSignature",
+                "refines": null
+            },
+            "content": {
+                "items": [
+                    {
+                        "code": "fetch_bestbuy_prices",
+                        "type": "PipeExtract",
+                        "pipe_category": "PipeOperator",
+                        "description": "Query Best Buy Product API for product prices",
+                        "inputs": {
+                            "product_name": "Text"
+                        },
+                        "result": "bestbuy_raw_response",
+                        "output": "ApiResponse",
+                        "pipe_dependencies": []
+                    },
+                    {
+                        "code": "fetch_walmart_prices",
+                        "type": "PipeExtract",
+                        "pipe_category": "PipeOperator",
+                        "description": "Query Walmart Product API for product prices",
+                        "inputs": {
+                            "product_name": "Text"
+                        },
+                        "result": "walmart_raw_response",
+                        "output": "ApiResponse",
+                        "pipe_dependencies": []
+                    },
+                    {
+                        "code": "fetch_serpapi_prices",
+                        "type": "PipeExtract",
+                        "pipe_category": "PipeOperator",
+                        "description": "Query SerpAPI Google Shopping for product prices",
+                        "inputs": {
+                            "product_name": "Text"
+                        },
+                        "result": "serpapi_raw_response",
+                        "output": "ApiResponse",
+                        "pipe_dependencies": []
+                    },
+                    {
+                        "code": "parse_bestbuy_results",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Parse Best Buy API response into structured product offers",
+                        "inputs": {
+                            "bestbuy_raw_response": "ApiResponse"
+                        },
+                        "result": "bestbuy_offers",
+                        "output": "ProductOffer[]",
+                        "pipe_dependencies": []
+                    },
+                    {
+                        "code": "parse_walmart_results",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Parse Walmart API response into structured product offers",
+                        "inputs": {
+                            "walmart_raw_response": "ApiResponse"
+                        },
+                        "result": "walmart_offers",
+                        "output": "ProductOffer[]",
+                        "pipe_dependencies": []
+                    },
+                    {
+                        "code": "parse_serpapi_results",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Parse SerpAPI response into structured product offers",
+                        "inputs": {
+                            "serpapi_raw_response": "ApiResponse"
+                        },
+                        "result": "serpapi_offers",
+                        "output": "ProductOffer[]",
+                        "pipe_dependencies": []
+                    },
+                    {
+                        "code": "merge_all_offers",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Combine all parsed offers from different sources into a single list",
+                        "inputs": {
+                            "bestbuy_offers": "ProductOffer[]",
+                            "walmart_offers": "ProductOffer[]",
+                            "serpapi_offers": "ProductOffer[]"
+                        },
+                        "result": "all_offers",
+                        "output": "ProductOffer[]",
+                        "pipe_dependencies": []
+                    },
+                    {
+                        "code": "fetch_store_distance",
+                        "type": "PipeExtract",
+                        "pipe_category": "PipeOperator",
+                        "description": "Fetch driving distance from SF downtown to store using Google Maps Distance Matrix API",
+                        "inputs": {
+                            "offer": "ProductOffer"
+                        },
+                        "result": "distance_response",
+                        "output": "DistanceResponse",
+                        "pipe_dependencies": []
+                    },
+                    {
+                        "code": "calculate_effective_cost",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Parse distance response and compute effective cost (price + distance_miles * 0.65)",
+                        "inputs": {
+                            "offer": "ProductOffer",
+                            "distance_response": "DistanceResponse"
+                        },
+                        "result": "enriched_offer",
+                        "output": "EnrichedProductOffer",
+                        "pipe_dependencies": []
+                    },
+                    {
+                        "code": "rank_and_analyze",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Analyze all enriched offers, rank by effective cost, and provide recommendation",
+                        "inputs": {
+                            "enriched_offers": "EnrichedProductOffer[]",
+                            "product_name": "Text"
+                        },
+                        "result": "analysis",
+                        "output": "PurchaseAnalysis",
+                        "pipe_dependencies": []
+                    },
+                    {
+                        "code": "prepare_comparison_table",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Format enriched offers into a structured comparison table",
+                        "inputs": {
+                            "enriched_offers": "EnrichedProductOffer[]"
+                        },
+                        "result": "comparison_table",
+                        "output": "ComparisonTable",
+                        "pipe_dependencies": []
+                    },
+                    {
+                        "code": "generate_card_prompt",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Create image generation prompt for summary card with best option and price difference",
+                        "inputs": {
+                            "analysis": "PurchaseAnalysis",
+                            "comparison_table": "ComparisonTable",
+                            "product_name": "Text"
+                        },
+                        "result": "card_prompt",
+                        "output": "Text",
+                        "pipe_dependencies": []
+                    },
+                    {
+                        "code": "generate_summary_card",
+                        "type": "PipeImgGen",
+                        "pipe_category": "PipeOperator",
+                        "description": "Generate 512x512 PNG summary card visualizing the best purchasing option",
+                        "inputs": {
+                            "card_prompt": "Text"
+                        },
+                        "result": "summary_card",
+                        "output": "Image",
+                        "pipe_dependencies": []
+                    },
+                    {
+                        "code": "assemble_final_output",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Combine analysis, comparison table, and summary card into final structured result",
+                        "inputs": {
+                            "analysis": "PurchaseAnalysis",
+                            "comparison_table": "ComparisonTable",
+                            "summary_card": "Image"
+                        },
+                        "result": "final_result",
+                        "output": "PriceGeniusResult",
+                        "pipe_dependencies": []
+                    },
+                    {
+                        "code": "fetch_all_prices_parallel",
+                        "type": "PipeParallel",
+                        "pipe_category": "PipeController",
+                        "description": "Fetch prices from all three sources concurrently",
+                        "inputs": {
+                            "product_name": "Text"
+                        },
+                        "result": "all_raw_responses",
+                        "output": "ApiResponse[]",
+                        "pipe_dependencies": [
+                            "fetch_bestbuy_prices",
+                            "fetch_walmart_prices",
+                            "fetch_serpapi_prices"
+                        ]
+                    },
+                    {
+                        "code": "parse_all_results_sequence",
+                        "type": "PipeSequence",
+                        "pipe_category": "PipeController",
+                        "description": "Parse all API responses into structured offers sequentially",
+                        "inputs": {
+                            "bestbuy_raw_response": "ApiResponse",
+                            "walmart_raw_response": "ApiResponse",
+                            "serpapi_raw_response": "ApiResponse"
+                        },
+                        "result": "parsed_results",
+                        "output": "ProductOffer[]",
+                        "pipe_dependencies": [
+                            "parse_bestbuy_results",
+                            "parse_walmart_results",
+                            "parse_serpapi_results",
+                            "merge_all_offers"
+                        ]
+                    },
+                    {
+                        "code": "enrich_single_offer",
+                        "type": "PipeSequence",
+                        "pipe_category": "PipeController",
+                        "description": "Fetch distance and calculate effective cost for a single offer",
+                        "inputs": {
+                            "offer": "ProductOffer"
+                        },
+                        "result": "enriched_offer",
+                        "output": "EnrichedProductOffer",
+                        "pipe_dependencies": [
+                            "fetch_store_distance",
+                            "calculate_effective_cost"
+                        ]
+                    },
+                    {
+                        "code": "enrich_offers_batch",
+                        "type": "PipeBatch",
+                        "pipe_category": "PipeController",
+                        "description": "Enrich each offer with distance from Google Maps API and effective cost calculation",
+                        "inputs": {
+                            "all_offers": "ProductOffer[]"
+                        },
+                        "result": "enriched_offers",
+                        "output": "EnrichedProductOffer[]",
+                        "pipe_dependencies": [
+                            "enrich_single_offer"
+                        ]
+                    },
+                    {
+                        "code": "analyze_and_visualize_sequence",
+                        "type": "PipeSequence",
+                        "pipe_category": "PipeController",
+                        "description": "Analyze offers, prepare comparison, and generate visual summary",
+                        "inputs": {
+                            "enriched_offers": "EnrichedProductOffer[]",
+                            "product_name": "Text"
+                        },
+                        "result": "visualization_complete",
+                        "output": "Image",
+                        "pipe_dependencies": [
+                            "rank_and_analyze",
+                            "prepare_comparison_table",
+                            "generate_card_prompt",
+                            "generate_summary_card"
+                        ]
+                    },
+                    {
+                        "code": "pricegenius_workflow",
+                        "type": "PipeSequence",
+                        "pipe_category": "PipeController",
+                        "description": "Main orchestrator for the complete PriceGenius workflow: fetches product prices from multiple sources, enriches with distance data, analyzes options, and generates final output with recommendation and visual summary",
+                        "inputs": {
+                            "product_name": "Text"
+                        },
+                        "result": "pricegenius_result",
+                        "output": "PriceGeniusResult",
+                        "pipe_dependencies": [
+                            "fetch_all_prices_parallel",
+                            "parse_all_results_sequence",
+                            "enrich_offers_batch",
+                            "analyze_and_visualize_sequence",
+                            "assemble_final_output"
+                        ]
+                    }
+                ]
+            }
+        },
+        "bundle_header_spec": {
+            "stuff_code": "deLFo",
+            "stuff_name": "bundle_header_spec",
+            "concept": {
+                "code": "BundleHeaderSpec",
+                "domain": "builder",
+                "description": "A domain information object.",
+                "structure_class_name": "BundleHeaderSpec",
+                "refines": null
+            },
+            "content": {
+                "domain": "price_comparison_shopping",
+                "description": "Comparing product prices across multiple retailers with location-based cost analysis and purchase recommendations",
+                "system_prompt": null,
+                "main_pipe": "pricegenius_workflow"
+            }
+        },
+        "pipe_specs": {
+            "stuff_code": "PK6Kq",
+            "stuff_name": "pipe_specs",
+            "concept": {
+                "code": "Anything",
+                "domain": "native",
+                "description": "Anything",
+                "structure_class_name": "AnythingContent",
+                "refines": null
+            },
+            "content": {
+                "items": [
+                    {
+                        "pipe_code": "fetch_bestbuy_prices",
+                        "type": "PipeExtract",
+                        "pipe_category": "PipeOperator",
+                        "description": "Query Best Buy Product API for product prices",
+                        "inputs": {
+                            "product_name": "Text"
+                        },
+                        "output": "Page[]",
+                        "extract_skill": "extract_text_from_visuals",
+                        "page_images": null,
+                        "page_image_captions": null,
+                        "page_views": null
+                    },
+                    {
+                        "pipe_code": "fetch_walmart_prices",
+                        "type": "PipeExtract",
+                        "pipe_category": "PipeOperator",
+                        "description": "Query Walmart Product API for product prices",
+                        "inputs": {
+                            "product_name": "Text"
+                        },
+                        "output": "Page[]",
+                        "extract_skill": "extract_text_from_visuals",
+                        "page_images": null,
+                        "page_image_captions": null,
+                        "page_views": null
+                    },
+                    {
+                        "pipe_code": "fetch_serpapi_prices",
+                        "type": "PipeExtract",
+                        "pipe_category": "PipeOperator",
+                        "description": "Query SerpAPI Google Shopping for product prices",
+                        "inputs": {
+                            "product_name": "Image"
+                        },
+                        "output": "Page[]",
+                        "extract_skill": "extract_text_from_visuals",
+                        "page_images": null,
+                        "page_image_captions": null,
+                        "page_views": null
+                    },
+                    {
+                        "pipe_code": "parse_bestbuy_results",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Parse Best Buy API response into structured product offers",
+                        "inputs": {
+                            "bestbuy_raw_response": "ApiResponse"
+                        },
+                        "output": "ProductOffer[]",
+                        "llm_skill": "llm_to_analyze_data",
+                        "system_prompt": "You are a data parsing assistant. Your task is to parse JSON API responses and extract structured product offer information. Output the data as a structured list of ProductOffer objects.",
+                        "prompt": "Parse the following Best Buy API response and extract all product offers.\n\n@bestbuy_raw_response\n\nExtract each product offer with the store name, price, product URL, and purchase type (online or in-store)."
+                    },
+                    {
+                        "pipe_code": "parse_walmart_results",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Parse Walmart API response into structured product offers",
+                        "inputs": {
+                            "walmart_raw_response": "ApiResponse"
+                        },
+                        "output": "ProductOffer[]",
+                        "llm_skill": "llm_to_analyze_data",
+                        "system_prompt": "You are a data parsing assistant. Your task is to parse raw API responses and extract structured product offer information. Output a list of ProductOffer objects.",
+                        "prompt": "Parse the following Walmart API response and extract all product offers.\n\n@walmart_raw_response\n\nExtract each product offer with the store name, price, product URL, and purchase type (online or in-store)."
+                    },
+                    {
+                        "pipe_code": "parse_serpapi_results",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Parse SerpAPI response into structured product offers",
+                        "inputs": {
+                            "serpapi_raw_response": "ApiResponse"
+                        },
+                        "output": "ProductOffer[]",
+                        "llm_skill": "llm_to_analyze_data",
+                        "system_prompt": "You are a data parsing assistant. Your task is to extract structured product offer information from API responses. You will generate a list of ProductOffer objects.",
+                        "prompt": "Parse the following SerpAPI response and extract all product offers into a structured list.\n\n@serpapi_raw_response\n\nExtract each product offer you find in the response."
+                    },
+                    {
+                        "pipe_code": "merge_all_offers",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Combine all parsed offers from different sources into a single list",
+                        "inputs": {
+                            "bestbuy_offers": "ProductOffer[]",
+                            "walmart_offers": "ProductOffer[]",
+                            "serpapi_offers": "ProductOffer[]"
+                        },
+                        "output": "ProductOffer[]",
+                        "llm_skill": "llm_to_answer_easy_questions",
+                        "system_prompt": "You are a data processing assistant. Your task is to merge multiple lists of ProductOffer objects into a single unified list. Output the result as a structured list of ProductOffer objects.",
+                        "prompt": "Combine all the product offers from the following sources into a single unified list:\n\nBest Buy offers:\n@bestbuy_offers\n\nWalmart offers:\n@walmart_offers\n\nSerpAPI offers:\n@serpapi_offers\n\nMerge all these offers into one complete list, preserving all the information from each offer."
+                    },
+                    {
+                        "pipe_code": "fetch_store_distance",
+                        "type": "PipeExtract",
+                        "pipe_category": "PipeOperator",
+                        "description": "Fetch driving distance from SF downtown to store using Google Maps Distance Matrix API",
+                        "inputs": {
+                            "offer": "Image"
+                        },
+                        "output": "Page[]",
+                        "extract_skill": "extract_text_from_visuals",
+                        "page_images": null,
+                        "page_image_captions": null,
+                        "page_views": null
+                    },
+                    {
+                        "pipe_code": "calculate_effective_cost",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Parse distance response and compute effective cost (price + distance_miles * 0.65)",
+                        "inputs": {
+                            "offer": "ProductOffer",
+                            "distance_response": "DistanceResponse"
+                        },
+                        "output": "EnrichedProductOffer",
+                        "llm_skill": "llm_to_analyze_data",
+                        "system_prompt": "You are a data processing assistant. Your task is to parse distance information and calculate effective costs for product offers. You will generate a structured EnrichedProductOffer object.",
+                        "prompt": "Given the following product offer and distance response, parse the distance information and calculate the effective cost.\n\n@offer\n\n@distance_response\n\nInstructions:\n- Extract the distance in miles from the distance_response\n- If the offer type is \"online\" or if distance information is unavailable, set distance_miles to null\n- Calculate effective_cost = price + (distance_miles * 0.65) for physical stores\n- For online offers, effective_cost = price\n- Preserve all original offer fields (store, price, url, type)\n- Add the distance_miles and effective_cost fields"
+                    },
+                    {
+                        "pipe_code": "rank_and_analyze",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Analyze all enriched offers, rank by effective cost, and provide recommendation",
+                        "inputs": {
+                            "enriched_offers": "EnrichedProductOffer[]",
+                            "product_name": "Text"
+                        },
+                        "output": "PurchaseAnalysis",
+                        "llm_skill": "llm_to_analyze_data",
+                        "system_prompt": "You are a shopping analyst that helps users find the best purchasing options. You analyze product offers considering both price and travel costs to provide data-driven recommendations. You will generate a structured PurchaseAnalysis output.",
+                        "prompt": "Analyze the following product offers for: $product_name\n\n@enriched_offers\n\nYour task:\n1. Rank all offers by their effective_cost (lowest to highest)\n2. Identify the best option that saves the most money\n3. Explain clearly why this option is the most cost-effective\n4. Provide a clear recommendation on whether to buy online or go to a physical store\n\nConsider both the base price and travel costs (for in-store purchases) in your analysis."
+                    },
+                    {
+                        "pipe_code": "prepare_comparison_table",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Format enriched offers into a structured comparison table",
+                        "inputs": {
+                            "enriched_offers": "EnrichedProductOffer[]"
+                        },
+                        "output": "ComparisonTable",
+                        "llm_skill": "llm_to_analyze_data",
+                        "system_prompt": "You are a data formatting assistant. Your task is to transform structured product offer data into a well-formatted comparison table. The output should be a structured ComparisonTable object.",
+                        "prompt": "Format the following enriched product offers into a clear, structured comparison table:\n\n@enriched_offers\n\nCreate a table that displays all offers with their key information: store name, price, purchase type, distance (if applicable), and effective cost. Make it easy to compare all options at a glance."
+                    },
+                    {
+                        "pipe_code": "generate_card_prompt",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Create image generation prompt for summary card with best option and price difference",
+                        "inputs": {
+                            "analysis": "PurchaseAnalysis",
+                            "comparison_table": "ComparisonTable",
+                            "product_name": "Text"
+                        },
+                        "output": "Text",
+                        "llm_skill": "llm_for_creative_writing",
+                        "system_prompt": "You are an expert at creating concise, effective image generation prompts. Focus on visual elements, layout, and key information that should appear in the image.",
+                        "prompt": "Create a VERY concise image generation prompt for a 512x512 summary card that visualizes the best purchasing option for $product_name.\n\n@analysis\n\n@comparison_table\n\nThe prompt should:\n- Be extremely focused and concise (best practice for image generation)\n- Specify a clean, modern card design with clear typography\n- Include the best option, price difference/savings prominently\n- Request relevant retailer logos or icons\n- Emphasize readability and visual hierarchy\n- Use specific visual design terms\n\nOutput only the image generation prompt text."
+                    },
+                    {
+                        "pipe_code": "generate_summary_card",
+                        "type": "PipeImgGen",
+                        "pipe_category": "PipeOperator",
+                        "description": "Generate 512x512 PNG summary card visualizing the best purchasing option",
+                        "inputs": {
+                            "card_prompt": "Text"
+                        },
+                        "output": "Image",
+                        "img_gen_skill": "gen_image_basic"
+                    },
+                    {
+                        "pipe_code": "assemble_final_output",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Combine analysis, comparison table, and summary card into final structured result",
+                        "inputs": {
+                            "analysis": "PurchaseAnalysis",
+                            "comparison_table": "ComparisonTable",
+                            "summary_card": "Image"
+                        },
+                        "output": "PriceGeniusResult",
+                        "llm_skill": "llm_to_answer_easy_questions",
+                        "system_prompt": "You are assembling a final structured result (PriceGeniusResult) by combining the purchase analysis, comparison table, and summary card image.",
+                        "prompt": "Assemble the final result by combining the following components:\n\n@analysis\n\n@comparison_table\n\nSummary card image:\n$summary_card\n\nCreate a structured output that includes the best purchasing option, reasoning, comparison table, and the summary card."
+                    },
+                    {
+                        "pipe_code": "fetch_all_prices_parallel",
+                        "type": "PipeParallel",
+                        "pipe_category": "PipeController",
+                        "description": "Fetch prices from all three sources concurrently",
+                        "inputs": {
+                            "product_name": "Text"
+                        },
+                        "output": "ApiResponse[]",
+                        "parallels": [
+                            {
+                                "pipe_code": "fetch_bestbuy_prices",
+                                "result": "bestbuy_raw_response"
+                            },
+                            {
+                                "pipe_code": "fetch_walmart_prices",
+                                "result": "walmart_raw_response"
+                            },
+                            {
+                                "pipe_code": "fetch_serpapi_prices",
+                                "result": "serpapi_raw_response"
+                            }
+                        ],
+                        "add_each_output": true,
+                        "combined_output": "ApiResponse"
+                    },
+                    {
+                        "pipe_code": "parse_all_results_sequence",
+                        "type": "PipeSequence",
+                        "pipe_category": "PipeController",
+                        "description": "Parse all API responses into structured offers sequentially",
+                        "inputs": {
+                            "bestbuy_raw_response": "ApiResponse",
+                            "walmart_raw_response": "ApiResponse",
+                            "serpapi_raw_response": "ApiResponse"
+                        },
+                        "output": "ProductOffer[]",
+                        "steps": [
+                            {
+                                "pipe_code": "parse_bestbuy_results",
+                                "result": "bestbuy_offers"
+                            },
+                            {
+                                "pipe_code": "parse_walmart_results",
+                                "result": "walmart_offers"
+                            },
+                            {
+                                "pipe_code": "parse_serpapi_results",
+                                "result": "serpapi_offers"
+                            },
+                            {
+                                "pipe_code": "merge_all_offers",
+                                "result": "parsed_results"
+                            }
+                        ]
+                    },
+                    {
+                        "pipe_code": "enrich_single_offer",
+                        "type": "PipeSequence",
+                        "pipe_category": "PipeController",
+                        "description": "Fetch distance and calculate effective cost for a single offer",
+                        "inputs": {
+                            "offer": "ProductOffer"
+                        },
+                        "output": "EnrichedProductOffer",
+                        "steps": [
+                            {
+                                "pipe_code": "fetch_store_distance",
+                                "result": "distance_data"
+                            },
+                            {
+                                "pipe_code": "calculate_effective_cost",
+                                "result": "enriched_offer"
+                            }
+                        ]
+                    },
+                    {
+                        "pipe_code": "enrich_offers_batch",
+                        "type": "PipeBatch",
+                        "pipe_category": "PipeController",
+                        "description": "Enrich each offer with distance from Google Maps API and effective cost calculation",
+                        "inputs": {
+                            "all_offers": "ProductOffer[]"
+                        },
+                        "output": "EnrichedProductOffer[]",
+                        "branch_pipe_code": "enrich_single_offer",
+                        "input_list_name": "all_offers",
+                        "input_item_name": "offer"
+                    },
+                    {
+                        "pipe_code": "analyze_and_visualize_sequence",
+                        "type": "PipeSequence",
+                        "pipe_category": "PipeController",
+                        "description": "Analyze offers, prepare comparison, and generate visual summary",
+                        "inputs": {
+                            "enriched_offers": "EnrichedProductOffer[]",
+                            "product_name": "Text"
+                        },
+                        "output": "Image",
+                        "steps": [
+                            {
+                                "pipe_code": "rank_and_analyze",
+                                "result": "analysis"
+                            },
+                            {
+                                "pipe_code": "prepare_comparison_table",
+                                "result": "comparison_table"
+                            },
+                            {
+                                "pipe_code": "generate_card_prompt",
+                                "result": "card_prompt"
+                            },
+                            {
+                                "pipe_code": "generate_summary_card",
+                                "result": "summary_card"
+                            }
+                        ]
+                    },
+                    {
+                        "pipe_code": "pricegenius_workflow",
+                        "type": "PipeSequence",
+                        "pipe_category": "PipeController",
+                        "description": "Main orchestrator for the complete PriceGenius workflow: fetches product prices from multiple sources, enriches with distance data, analyzes options, and generates final output with recommendation and visual summary",
+                        "inputs": {
+                            "product_name": "Text"
+                        },
+                        "output": "PriceGeniusResult",
+                        "steps": [
+                            {
+                                "pipe_code": "fetch_all_prices_parallel",
+                                "result": "all_raw_responses"
+                            },
+                            {
+                                "pipe_code": "parse_all_results_sequence",
+                                "result": "all_offers"
+                            },
+                            {
+                                "pipe_code": "enrich_offers_batch",
+                                "result": "enriched_offers"
+                            },
+                            {
+                                "pipe_code": "analyze_and_visualize_sequence",
+                                "result": "analysis_and_visuals"
+                            },
+                            {
+                                "pipe_code": "assemble_final_output",
+                                "result": "pricegenius_result"
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        "pipelex_bundle_spec": {
+            "stuff_code": "9QSzi",
+            "stuff_name": "pipelex_bundle_spec",
+            "concept": {
+                "code": "PipelexBundleSpec",
+                "domain": "builder",
+                "description": "A Pipelex bundle spec.",
+                "structure_class_name": "PipelexBundleSpec",
+                "refines": null
+            },
+            "content": {
+                "domain": "price_comparison_shopping",
+                "description": "Comparing product prices across multiple retailers with location-based cost analysis and purchase recommendations",
+                "system_prompt": null,
+                "main_pipe": "pricegenius_workflow",
+                "concept": {
+                    "ApiResponse": {
+                        "the_concept_code": "ApiResponse",
+                        "description": "Raw JSON response from an external API endpoint.",
+                        "structure": null,
+                        "refines": "Text"
+                    },
+                    "ProductOffer": {
+                        "the_concept_code": "ProductOffer",
+                        "description": "A single product purchasing option from a retailer.",
+                        "structure": {
+                            "store": {
+                                "the_field_name": "store",
+                                "description": "Name of the retailer or store",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "price": {
+                                "the_field_name": "price",
+                                "description": "Product price in dollars",
+                                "type": "number",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "url": {
+                                "the_field_name": "url",
+                                "description": "Link to the product page",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "type": {
+                                "the_field_name": "type",
+                                "description": "Purchase type (online or in-store)",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            }
+                        },
+                        "refines": null
+                    },
+                    "EnrichedProductOffer": {
+                        "the_concept_code": "EnrichedProductOffer",
+                        "description": "A product purchasing option with calculated distance and effective cost.",
+                        "structure": {
+                            "store": {
+                                "the_field_name": "store",
+                                "description": "Name of the retailer or store",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "price": {
+                                "the_field_name": "price",
+                                "description": "Product price in dollars",
+                                "type": "number",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "url": {
+                                "the_field_name": "url",
+                                "description": "Link to the product page",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "type": {
+                                "the_field_name": "type",
+                                "description": "Purchase type (online or in-store)",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "distance_miles": {
+                                "the_field_name": "distance_miles",
+                                "description": "Driving distance from San Francisco downtown to physical store location",
+                                "type": "number",
+                                "required": null,
+                                "default_value": null
+                            },
+                            "effective_cost": {
+                                "the_field_name": "effective_cost",
+                                "description": "Total cost including price and travel cost (price + distance_miles * 0.65)",
+                                "type": "number",
+                                "required": true,
+                                "default_value": null
+                            }
+                        },
+                        "refines": null
+                    },
+                    "PurchaseAnalysis": {
+                        "the_concept_code": "PurchaseAnalysis",
+                        "description": "LLM-generated analysis of product purchasing options with recommendation.",
+                        "structure": {
+                            "best_option": {
+                                "the_field_name": "best_option",
+                                "description": "The recommended store and purchase method",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "reasoning": {
+                                "the_field_name": "reasoning",
+                                "description": "Explanation of why this option saves more money",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "buy_recommendation": {
+                                "the_field_name": "buy_recommendation",
+                                "description": "Suggestion to buy online or go in person",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            }
+                        },
+                        "refines": null
+                    },
+                    "ComparisonTable": {
+                        "the_concept_code": "ComparisonTable",
+                        "description": "Structured table comparing all product offers with their costs and distances.",
+                        "structure": null,
+                        "refines": "Text"
+                    },
+                    "ImagePrompt": {
+                        "the_concept_code": "ImagePrompt",
+                        "description": "Text prompt for generating an image using an image generation model.",
+                        "structure": null,
+                        "refines": "Text"
+                    },
+                    "PriceGeniusResult": {
+                        "the_concept_code": "PriceGeniusResult",
+                        "description": "Final output containing the best purchasing option, analysis, comparison data, and visual summary.",
+                        "structure": {
+                            "best_option": {
+                                "the_field_name": "best_option",
+                                "description": "The recommended store and purchase method",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "reasoning": {
+                                "the_field_name": "reasoning",
+                                "description": "Explanation of the recommendation",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "comparison_table": {
+                                "the_field_name": "comparison_table",
+                                "description": "Table of all options with store, price, distance, and effective cost",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            },
+                            "summary_card": {
+                                "the_field_name": "summary_card",
+                                "description": "Visual summary card image",
+                                "type": "text",
+                                "required": true,
+                                "default_value": null
+                            }
+                        },
+                        "refines": null
+                    }
+                },
+                "pipe": {
+                    "fetch_bestbuy_prices": {
+                        "pipe_code": "fetch_bestbuy_prices",
+                        "type": "PipeExtract",
+                        "pipe_category": "PipeOperator",
+                        "description": "Query Best Buy Product API for product prices",
+                        "inputs": {
+                            "product_name": "Text"
+                        },
+                        "output": "Page[]",
+                        "extract_skill": "extract_text_from_visuals",
+                        "page_images": null,
+                        "page_image_captions": null,
+                        "page_views": null
+                    },
+                    "fetch_walmart_prices": {
+                        "pipe_code": "fetch_walmart_prices",
+                        "type": "PipeExtract",
+                        "pipe_category": "PipeOperator",
+                        "description": "Query Walmart Product API for product prices",
+                        "inputs": {
+                            "product_name": "Text"
+                        },
+                        "output": "Page[]",
+                        "extract_skill": "extract_text_from_visuals",
+                        "page_images": null,
+                        "page_image_captions": null,
+                        "page_views": null
+                    },
+                    "fetch_serpapi_prices": {
+                        "pipe_code": "fetch_serpapi_prices",
+                        "type": "PipeExtract",
+                        "pipe_category": "PipeOperator",
+                        "description": "Query SerpAPI Google Shopping for product prices",
+                        "inputs": {
+                            "product_name": "Image"
+                        },
+                        "output": "Page[]",
+                        "extract_skill": "extract_text_from_visuals",
+                        "page_images": null,
+                        "page_image_captions": null,
+                        "page_views": null
+                    },
+                    "parse_bestbuy_results": {
+                        "pipe_code": "parse_bestbuy_results",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Parse Best Buy API response into structured product offers",
+                        "inputs": {
+                            "bestbuy_raw_response": "ApiResponse"
+                        },
+                        "output": "ProductOffer[]",
+                        "llm_skill": "llm_to_analyze_data",
+                        "system_prompt": "You are a data parsing assistant. Your task is to parse JSON API responses and extract structured product offer information. Output the data as a structured list of ProductOffer objects.",
+                        "prompt": "Parse the following Best Buy API response and extract all product offers.\n\n@bestbuy_raw_response\n\nExtract each product offer with the store name, price, product URL, and purchase type (online or in-store)."
+                    },
+                    "parse_walmart_results": {
+                        "pipe_code": "parse_walmart_results",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Parse Walmart API response into structured product offers",
+                        "inputs": {
+                            "walmart_raw_response": "ApiResponse"
+                        },
+                        "output": "ProductOffer[]",
+                        "llm_skill": "llm_to_analyze_data",
+                        "system_prompt": "You are a data parsing assistant. Your task is to parse raw API responses and extract structured product offer information. Output a list of ProductOffer objects.",
+                        "prompt": "Parse the following Walmart API response and extract all product offers.\n\n@walmart_raw_response\n\nExtract each product offer with the store name, price, product URL, and purchase type (online or in-store)."
+                    },
+                    "parse_serpapi_results": {
+                        "pipe_code": "parse_serpapi_results",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Parse SerpAPI response into structured product offers",
+                        "inputs": {
+                            "serpapi_raw_response": "ApiResponse"
+                        },
+                        "output": "ProductOffer[]",
+                        "llm_skill": "llm_to_analyze_data",
+                        "system_prompt": "You are a data parsing assistant. Your task is to extract structured product offer information from API responses. You will generate a list of ProductOffer objects.",
+                        "prompt": "Parse the following SerpAPI response and extract all product offers into a structured list.\n\n@serpapi_raw_response\n\nExtract each product offer you find in the response."
+                    },
+                    "merge_all_offers": {
+                        "pipe_code": "merge_all_offers",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Combine all parsed offers from different sources into a single list",
+                        "inputs": {
+                            "bestbuy_offers": "ProductOffer[]",
+                            "walmart_offers": "ProductOffer[]",
+                            "serpapi_offers": "ProductOffer[]"
+                        },
+                        "output": "ProductOffer[]",
+                        "llm_skill": "llm_to_answer_easy_questions",
+                        "system_prompt": "You are a data processing assistant. Your task is to merge multiple lists of ProductOffer objects into a single unified list. Output the result as a structured list of ProductOffer objects.",
+                        "prompt": "Combine all the product offers from the following sources into a single unified list:\n\nBest Buy offers:\n@bestbuy_offers\n\nWalmart offers:\n@walmart_offers\n\nSerpAPI offers:\n@serpapi_offers\n\nMerge all these offers into one complete list, preserving all the information from each offer."
+                    },
+                    "fetch_store_distance": {
+                        "pipe_code": "fetch_store_distance",
+                        "type": "PipeExtract",
+                        "pipe_category": "PipeOperator",
+                        "description": "Fetch driving distance from SF downtown to store using Google Maps Distance Matrix API",
+                        "inputs": {
+                            "offer": "Image"
+                        },
+                        "output": "Page[]",
+                        "extract_skill": "extract_text_from_visuals",
+                        "page_images": null,
+                        "page_image_captions": null,
+                        "page_views": null
+                    },
+                    "calculate_effective_cost": {
+                        "pipe_code": "calculate_effective_cost",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Parse distance response and compute effective cost (price + distance_miles * 0.65)",
+                        "inputs": {
+                            "offer": "ProductOffer",
+                            "distance_response": "DistanceResponse"
+                        },
+                        "output": "EnrichedProductOffer",
+                        "llm_skill": "llm_to_analyze_data",
+                        "system_prompt": "You are a data processing assistant. Your task is to parse distance information and calculate effective costs for product offers. You will generate a structured EnrichedProductOffer object.",
+                        "prompt": "Given the following product offer and distance response, parse the distance information and calculate the effective cost.\n\n@offer\n\n@distance_response\n\nInstructions:\n- Extract the distance in miles from the distance_response\n- If the offer type is \"online\" or if distance information is unavailable, set distance_miles to null\n- Calculate effective_cost = price + (distance_miles * 0.65) for physical stores\n- For online offers, effective_cost = price\n- Preserve all original offer fields (store, price, url, type)\n- Add the distance_miles and effective_cost fields"
+                    },
+                    "rank_and_analyze": {
+                        "pipe_code": "rank_and_analyze",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Analyze all enriched offers, rank by effective cost, and provide recommendation",
+                        "inputs": {
+                            "enriched_offers": "EnrichedProductOffer[]",
+                            "product_name": "Text"
+                        },
+                        "output": "PurchaseAnalysis",
+                        "llm_skill": "llm_to_analyze_data",
+                        "system_prompt": "You are a shopping analyst that helps users find the best purchasing options. You analyze product offers considering both price and travel costs to provide data-driven recommendations. You will generate a structured PurchaseAnalysis output.",
+                        "prompt": "Analyze the following product offers for: $product_name\n\n@enriched_offers\n\nYour task:\n1. Rank all offers by their effective_cost (lowest to highest)\n2. Identify the best option that saves the most money\n3. Explain clearly why this option is the most cost-effective\n4. Provide a clear recommendation on whether to buy online or go to a physical store\n\nConsider both the base price and travel costs (for in-store purchases) in your analysis."
+                    },
+                    "prepare_comparison_table": {
+                        "pipe_code": "prepare_comparison_table",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Format enriched offers into a structured comparison table",
+                        "inputs": {
+                            "enriched_offers": "EnrichedProductOffer[]"
+                        },
+                        "output": "ComparisonTable",
+                        "llm_skill": "llm_to_analyze_data",
+                        "system_prompt": "You are a data formatting assistant. Your task is to transform structured product offer data into a well-formatted comparison table. The output should be a structured ComparisonTable object.",
+                        "prompt": "Format the following enriched product offers into a clear, structured comparison table:\n\n@enriched_offers\n\nCreate a table that displays all offers with their key information: store name, price, purchase type, distance (if applicable), and effective cost. Make it easy to compare all options at a glance."
+                    },
+                    "generate_card_prompt": {
+                        "pipe_code": "generate_card_prompt",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Create image generation prompt for summary card with best option and price difference",
+                        "inputs": {
+                            "analysis": "PurchaseAnalysis",
+                            "comparison_table": "ComparisonTable",
+                            "product_name": "Text"
+                        },
+                        "output": "Text",
+                        "llm_skill": "llm_for_creative_writing",
+                        "system_prompt": "You are an expert at creating concise, effective image generation prompts. Focus on visual elements, layout, and key information that should appear in the image.",
+                        "prompt": "Create a VERY concise image generation prompt for a 512x512 summary card that visualizes the best purchasing option for $product_name.\n\n@analysis\n\n@comparison_table\n\nThe prompt should:\n- Be extremely focused and concise (best practice for image generation)\n- Specify a clean, modern card design with clear typography\n- Include the best option, price difference/savings prominently\n- Request relevant retailer logos or icons\n- Emphasize readability and visual hierarchy\n- Use specific visual design terms\n\nOutput only the image generation prompt text."
+                    },
+                    "generate_summary_card": {
+                        "pipe_code": "generate_summary_card",
+                        "type": "PipeImgGen",
+                        "pipe_category": "PipeOperator",
+                        "description": "Generate 512x512 PNG summary card visualizing the best purchasing option",
+                        "inputs": {
+                            "card_prompt": "Text"
+                        },
+                        "output": "Image",
+                        "img_gen_skill": "gen_image_basic"
+                    },
+                    "assemble_final_output": {
+                        "pipe_code": "assemble_final_output",
+                        "type": "PipeLLM",
+                        "pipe_category": "PipeOperator",
+                        "description": "Combine analysis, comparison table, and summary card into final structured result",
+                        "inputs": {
+                            "analysis": "PurchaseAnalysis",
+                            "comparison_table": "ComparisonTable",
+                            "summary_card": "Image"
+                        },
+                        "output": "PriceGeniusResult",
+                        "llm_skill": "llm_to_answer_easy_questions",
+                        "system_prompt": "You are assembling a final structured result (PriceGeniusResult) by combining the purchase analysis, comparison table, and summary card image.",
+                        "prompt": "Assemble the final result by combining the following components:\n\n@analysis\n\n@comparison_table\n\nSummary card image:\n$summary_card\n\nCreate a structured output that includes the best purchasing option, reasoning, comparison table, and the summary card."
+                    },
+                    "fetch_all_prices_parallel": {
+                        "pipe_code": "fetch_all_prices_parallel",
+                        "type": "PipeParallel",
+                        "pipe_category": "PipeController",
+                        "description": "Fetch prices from all three sources concurrently",
+                        "inputs": {
+                            "product_name": "Text"
+                        },
+                        "output": "ApiResponse[]",
+                        "parallels": [
+                            {
+                                "pipe_code": "fetch_bestbuy_prices",
+                                "result": "bestbuy_raw_response"
+                            },
+                            {
+                                "pipe_code": "fetch_walmart_prices",
+                                "result": "walmart_raw_response"
+                            },
+                            {
+                                "pipe_code": "fetch_serpapi_prices",
+                                "result": "serpapi_raw_response"
+                            }
+                        ],
+                        "add_each_output": true,
+                        "combined_output": "ApiResponse"
+                    },
+                    "parse_all_results_sequence": {
+                        "pipe_code": "parse_all_results_sequence",
+                        "type": "PipeSequence",
+                        "pipe_category": "PipeController",
+                        "description": "Parse all API responses into structured offers sequentially",
+                        "inputs": {
+                            "bestbuy_raw_response": "ApiResponse",
+                            "walmart_raw_response": "ApiResponse",
+                            "serpapi_raw_response": "ApiResponse"
+                        },
+                        "output": "ProductOffer[]",
+                        "steps": [
+                            {
+                                "pipe_code": "parse_bestbuy_results",
+                                "result": "bestbuy_offers"
+                            },
+                            {
+                                "pipe_code": "parse_walmart_results",
+                                "result": "walmart_offers"
+                            },
+                            {
+                                "pipe_code": "parse_serpapi_results",
+                                "result": "serpapi_offers"
+                            },
+                            {
+                                "pipe_code": "merge_all_offers",
+                                "result": "parsed_results"
+                            }
+                        ]
+                    },
+                    "enrich_single_offer": {
+                        "pipe_code": "enrich_single_offer",
+                        "type": "PipeSequence",
+                        "pipe_category": "PipeController",
+                        "description": "Fetch distance and calculate effective cost for a single offer",
+                        "inputs": {
+                            "offer": "ProductOffer"
+                        },
+                        "output": "EnrichedProductOffer",
+                        "steps": [
+                            {
+                                "pipe_code": "fetch_store_distance",
+                                "result": "distance_data"
+                            },
+                            {
+                                "pipe_code": "calculate_effective_cost",
+                                "result": "enriched_offer"
+                            }
+                        ]
+                    },
+                    "enrich_offers_batch": {
+                        "pipe_code": "enrich_offers_batch",
+                        "type": "PipeBatch",
+                        "pipe_category": "PipeController",
+                        "description": "Enrich each offer with distance from Google Maps API and effective cost calculation",
+                        "inputs": {
+                            "all_offers": "ProductOffer[]"
+                        },
+                        "output": "EnrichedProductOffer[]",
+                        "branch_pipe_code": "enrich_single_offer",
+                        "input_list_name": "all_offers",
+                        "input_item_name": "offer"
+                    },
+                    "analyze_and_visualize_sequence": {
+                        "pipe_code": "analyze_and_visualize_sequence",
+                        "type": "PipeSequence",
+                        "pipe_category": "PipeController",
+                        "description": "Analyze offers, prepare comparison, and generate visual summary",
+                        "inputs": {
+                            "enriched_offers": "EnrichedProductOffer[]",
+                            "product_name": "Text"
+                        },
+                        "output": "Image",
+                        "steps": [
+                            {
+                                "pipe_code": "rank_and_analyze",
+                                "result": "analysis"
+                            },
+                            {
+                                "pipe_code": "prepare_comparison_table",
+                                "result": "comparison_table"
+                            },
+                            {
+                                "pipe_code": "generate_card_prompt",
+                                "result": "card_prompt"
+                            },
+                            {
+                                "pipe_code": "generate_summary_card",
+                                "result": "summary_card"
+                            }
+                        ]
+                    },
+                    "pricegenius_workflow": {
+                        "pipe_code": "pricegenius_workflow",
+                        "type": "PipeSequence",
+                        "pipe_category": "PipeController",
+                        "description": "Main orchestrator for the complete PriceGenius workflow: fetches product prices from multiple sources, enriches with distance data, analyzes options, and generates final output with recommendation and visual summary",
+                        "inputs": {
+                            "product_name": "Text"
+                        },
+                        "output": "PriceGeniusResult",
+                        "steps": [
+                            {
+                                "pipe_code": "fetch_all_prices_parallel",
+                                "result": "all_raw_responses"
+                            },
+                            {
+                                "pipe_code": "parse_all_results_sequence",
+                                "result": "all_offers"
+                            },
+                            {
+                                "pipe_code": "enrich_offers_batch",
+                                "result": "enriched_offers"
+                            },
+                            {
+                                "pipe_code": "analyze_and_visualize_sequence",
+                                "result": "analysis_and_visuals"
+                            },
+                            {
+                                "pipe_code": "assemble_final_output",
+                                "result": "pricegenius_result"
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    },
+    "aliases": {
+        "main_stuff": "pipelex_bundle_spec"
+    }
+}
