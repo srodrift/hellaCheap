@@ -42,7 +42,7 @@ def best_link(item: dict, query: str) -> str | None:
         if isinstance(val, str) and val.startswith(("http://", "https://")):
             return val
 
-    # Fallback: search link (only if we truly have nothing)
+    # Fallback: Google search link
     title = item.get("title") or query
     store = item.get("source") or ""
     search_q = quote_plus(f"{title} {store}".strip())
@@ -52,12 +52,11 @@ def price_number(item: dict):
     """Return a numeric price if possible, otherwise None."""
     p = item.get("extracted_price")
     if p is None:
-        # Try to parse 'price' which can be strings like '$129.99'
         raw = item.get("price")
         if isinstance(raw, (int, float)):
             p = float(raw)
         elif isinstance(raw, str):
-            digits = "".join(ch for ch in raw if (ch.isdigit() or ch == ".")))
+            digits = "".join(ch for ch in raw if ch.isdigit() or ch == ".")
             p = float(digits) if digits else None
     return p
 
@@ -142,11 +141,11 @@ if product.strip():
                 if is_best else ""
             )
 
-            # Build link HTML only when we have a valid URL
+            # Build link HTML only when valid
             link_html = (
                 f"<a href='{p['link']}' target='_blank' "
                 f"style='color:#2563eb;text-decoration:none;'>🌐 {p['domain']}</a>"
-                if p["link"] and p["link"].startswith(("http://", "https://"))
+                if p['link'] and p['link'].startswith(('http://', 'https://'))
                 else "<span style='color:#6b7280;'>No link</span>"
             )
 
@@ -184,7 +183,7 @@ st.markdown("""
 ---
 <center>
 <p style='color:gray;font-size:13px;'>
-Built with ❤️ by Team PricePilot — powered by Streamlit, SerpAPI, and OpenAI
+Built with ❤️ by Sunny — PricePilot is powered by Streamlit, SerpAPI, and OpenAI
 </p>
 </center>
 """, unsafe_allow_html=True)
