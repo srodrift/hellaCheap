@@ -20,13 +20,6 @@ client = OpenAI(api_key=OPENAI_KEY)
 # --------------------------
 # 🔍 Fetch Prices from SerpAPI
 # --------------------------
-def clean_link(url, product):
-    """Clean or replace bad Google redirect links."""
-    if not url or "google.com" in url:
-        # fallback to a readable search query
-        return f"https://www.google.com/search?q={product.replace(' ', '+')}"
-    return url
-
 def fetch_prices(product):
     url = f"https://serpapi.com/search.json?q={product}&engine=google_shopping&api_key={SERPAPI_KEY}"
     response = requests.get(url)
@@ -36,11 +29,13 @@ def fetch_prices(product):
     for item in data.get("shopping_results", [])[:5]:
         store = item.get("source") or item.get("merchant") or "Unknown Store"
         price = item.get("extracted_price")
-        link = item.get("link") or item.get("product_link") or item.get("product_page_url")
+        link = item.get("link")
+        if not link or "google.com" in link:
+            # try to extract real domain from store name
+            domain_guess = store.lower().replace(" ", "") + ".com"
+            link = f"https://{domain_guess}"
 
-        link = clean_link(link, product)
         if price:
-            # extract domain for nicer link label
             domain = urlparse(link).netloc.replace("www.", "")
             results.append({
                 "store": store,
