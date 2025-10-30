@@ -2,7 +2,7 @@ import os, requests, json
 from openai import OpenAI
 
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
-client = OpenAI(api_key=os.getenv("BLACKBOX_API_KEY"))
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def fetch_prices(product):
     if not SERPAPI_KEY:
