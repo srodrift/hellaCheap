@@ -5,33 +5,30 @@ import pandas as pd
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# -------------------------------
+# -----------------------------------
 # 🔐 Load environment variables
-# -------------------------------
+# -----------------------------------
 load_dotenv()
-
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_KEY)
 
-# -------------------------------
-# 🧭 Streamlit Config
-# -------------------------------
+# -----------------------------------
+# 🧭 Streamlit Configuration
+# -----------------------------------
 st.set_page_config(page_title="🛒 HellaCheap SF", page_icon="💸", layout="centered")
 
 st.title("🛒 HellaCheap SF")
-st.write(
-    """
-Compare local prices across **Bay Area** stores — powered by **SerpAPI** and **OpenAI** 💡  
-Some stores may repeat because of resellers, bundles, or stock differences.  
-We show **only one lowest-priced listing per store**.
-"""
+st.caption(
+    "Compare local prices across Bay Area stores — powered by SerpAPI and OpenAI 💡\n\n"
+    "Results come from public shopping listings. Some stores may repeat due to resellers, bundles, or stock differences. "
+    "We show only one **lowest-priced listing per store**."
 )
 
-# -------------------------------
+# -----------------------------------
 # 💸 Bay Area Tax Rates
-# -------------------------------
+# -----------------------------------
 bay_area_taxes = {
     "San Francisco": 9.625,
     "Oakland": 10.25,
@@ -46,16 +43,15 @@ city = st.selectbox("Select your Bay Area city:", list(bay_area_taxes.keys()))
 tax_rate = bay_area_taxes[city]
 st.markdown(f"💸 **Tax rate applied:** {tax_rate}%")
 
-# -------------------------------
+# -----------------------------------
 # 🔍 Search Input
-# -------------------------------
+# -----------------------------------
 query = st.text_input("Search any product (e.g., AirPods Pro, oat milk, PS5):")
 
-# -------------------------------
-# 🧾 Fetch Results
-# -------------------------------
+# -----------------------------------
+# 🛒 Fetch Results from SerpAPI
+# -----------------------------------
 def fetch_results(search_query):
-    """Fetch shopping results using SerpAPI"""
     url = "https://serpapi.com/search"
     params = {
         "engine": "google_shopping",
@@ -63,6 +59,7 @@ def fetch_results(search_query):
         "location": "San Francisco Bay Area, California, United States",
         "api_key": SERPAPI_KEY,
     }
+
     response = requests.get(url, params=params)
     data = response.json()
 
@@ -71,24 +68,21 @@ def fetch_results(search_query):
 
     results = []
     for item in data["shopping_results"]:
-        price_str = item.get("extracted_price")
-        if not price_str:
+        price = item.get("extracted_price")
+        if not price:
             continue
 
         try:
-            price = float(price_str)
-        except (ValueError, TypeError):
+            price = float(price)
+        except ValueError:
             continue
 
-        link = (
-            item.get("link")
-            or item.get("product_link")
-            or item.get("shopping_url")
-            or item.get("serpapi_link")
-            or f"https://www.google.com/search?q={search_query}"
-        )
+        link = item.get("link") or item.get("product_link") or None
+        source = item.get("source") or item.get("merchant", {}).get("name") or "Unknown"
 
-        source = item.get("source") or item.get("merchant", {}).get("name")
+        # Simplify Google Shopping links
+        if link and "google.com" in link:
+            link = f"https://www.google.com/shopping?q={search_query.replace(' ', '+')}"
 
         results.append(
             {
@@ -101,75 +95,62 @@ def fetch_results(search_query):
     return results
 
 
-# -------------------------------
-# 🧠 AI Recommendation
-# -------------------------------
+# -----------------------------------
+# 🧠 AI Summary Generator
+# -----------------------------------
 def summarize_with_ai(product_name, cheapest_item, tax_rate):
-    """Use OpenAI to create a concise friendly summary"""
+    """Generate a friendly summary with OpenAI"""
     try:
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are a helpful shopping assistant that compares prices across local stores.",
-                },
-                {
-                    "role": "user",
-                    "content": f"The cheapest {product_name} is '{cheapest_item['title']}' from {cheapest_item['source']} priced at ${cheapest_item['price']:.2f}. The Bay Area tax rate is {tax_rate}%. Recommend why it's the best deal in a short, friendly tone.",
-                },
+                {"role": "system", "content": "You are a smart, friendly price comparison assistant for Bay Area shoppers."},
+                {"role": "user", "content": f"The cheapest {product_name} is '{cheapest_item['title']}' from {cheapest_item['source']} priced at ${cheapest_item['price']:.2f}. Bay Area tax is {tax_rate}%. Give a short, clean recommendation."},
             ],
         )
-        summary = completion.choices[0].message.content.strip()
-        clean_summary = (
-            summary.replace("\n", " ").replace("\r", "").replace("  ", " ").strip()
-        )
-        return clean_summary
+        text = completion.choices[0].message.content.strip()
+        clean_text = " ".join(text.split())  # remove all weird breaks/newlines
+        return clean_text
     except Exception as e:
         return f"(AI summary unavailable: {e})"
 
 
-# -------------------------------
-# 💰 Main Search + Display
-# -------------------------------
+# -----------------------------------
+# 💰 Main App Display
+# -----------------------------------
 if query:
     st.markdown(f"### 💰 {city} Prices (including tax)")
-    st.markdown(f"Tax rate applied: **{tax_rate}%**")
+    st.caption(f"Tax rate applied: {tax_rate}%")
 
     results = fetch_results(query)
 
     if not results:
-        st.warning("No results found. Try a different search term!")
+        st.warning("No results found. Try another search.")
     else:
-        # Keep lowest price per store
         df = pd.DataFrame(results)
         df = df.sort_values("price").drop_duplicates(subset="source", keep="first")
 
         for _, row in df.iterrows():
             total = round(row["price"] * (1 + tax_rate / 100), 2)
-            store = row["source"] or "Unknown Store"
+            st.markdown(f"#### {row['title']}")
+            st.write(f"**{row['source']}** — ${row['price']:.2f}")
+            st.write(f"💵 Total after tax: **${total:.2f}**")
 
-            st.markdown(f"**{row['title']}**")
-            st.write(f"{store} — **${row['price']:.2f}**")
-            st.write(f"Total after tax: **${total:.2f}**")
-
-            # Google Maps link
-            store_query = f"{store} {city}"
-            maps_url = f"https://www.google.com/maps/search/{store_query.replace(' ', '+')}"
+            # Maps link (shortened)
+            maps_url = f"https://maps.google.com/?q={row['source'].replace(' ', '+')}+{city.replace(' ', '+')}"
             st.markdown(f"[📍 Find on Maps]({maps_url})")
 
-            # Product link
-            if row["link"] and row["link"] != "#":
+            if row["link"]:
                 st.markdown(f"[🔗 View Product]({row['link']})")
             else:
                 st.caption("No product link available")
 
-            st.markdown("---")
+            st.divider()
 
-        # AI Summary
+        # AI summary
         cheapest = df.iloc[0].to_dict()
         ai_summary = summarize_with_ai(query, cheapest, tax_rate)
         st.markdown(f"### 🧠 AI Recommendation\n\n{ai_summary}")
 
 else:
-    st.info("👆 Enter a product above to start comparing prices!")
+    st.info("👆 Enter a product to start comparing prices locally in the Bay Area!")
