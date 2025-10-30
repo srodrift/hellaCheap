@@ -21,8 +21,8 @@ st.set_page_config(page_title="🛒 HellaCheap SF", page_icon="💸", layout="ce
 st.title("🛒 HellaCheap SF")
 st.write(
     """
-Compare local prices across Bay Area stores — powered by **SerpAPI** and **OpenAI** 💡  
-Some sources may repeat because of resellers, bundles, or stock differences.  
+Compare local prices across **Bay Area** stores — powered by **SerpAPI** and **OpenAI** 💡  
+Some stores may repeat because of resellers, bundles, or stock differences.  
 We show **only one lowest-priced listing per store**.
 """
 )
@@ -108,7 +108,7 @@ def summarize_with_ai(product_name, cheapest_item):
                 },
                 {
                     "role": "user",
-                    "content": f"The cheapest {product_name} is {cheapest_item['title']} from {cheapest_item['source']} priced at ${cheapest_item['price']:.2f}. San Francisco tax is {tax_rate}%. Recommend why it's the best deal in a short friendly tone.",
+                    "content": f"The cheapest {product_name} is {cheapest_item['title']} from {cheapest_item['source']} priced at ${cheapest_item['price']:.2f}. The Bay Area tax rate is {tax_rate}%. Recommend why it's the best deal in a short friendly tone.",
                 },
             ],
         )
@@ -132,12 +132,18 @@ if query:
 
         for _, row in df.iterrows():
             total = round(row["price"] * (1 + tax_rate / 100), 2)
+
             st.markdown(f"**{row['title']}**")
             st.write(f"{row['source']} — **${row['price']:.2f}**")
             st.write(f"Total after tax: **${total:.2f}**")
 
+            # Google Maps search link for store
+            store_query = f"{row['source']} {city}"
+            maps_url = f"https://www.google.com/maps/search/{store_query.replace(' ', '+')}"
+            st.markdown(f"[📍 Find on Maps]({maps_url})")
+
+            # Product link
             if row["link"] and row["link"] != "#":
-                short_link = row["link"][:60] + "..." if len(row["link"]) > 60 else row["link"]
                 st.markdown(f"[🔗 View Product]({row['link']})")
             else:
                 st.caption("No product link available")
