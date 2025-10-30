@@ -7,13 +7,13 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Keys
+# API Keys
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_KEY)
 
-# --- Streamlit Page Setup ---
+# Streamlit Setup
 st.set_page_config(page_title="PricePilot", page_icon="🛫", layout="centered")
 
 st.markdown("""
@@ -23,7 +23,8 @@ st.markdown("""
     </p>
 """, unsafe_allow_html=True)
 
-# --- Fetch Prices Function ---
+
+# --- Fetch Prices ---
 def fetch_prices(product):
     if not SERPAPI_KEY:
         st.error("❌ Missing SERPAPI_KEY. Please set it in Streamlit Secrets.")
@@ -45,29 +46,28 @@ def fetch_prices(product):
 
     if "shopping_results" in data:
         for r in data["shopping_results"][:5]:
-            store = r.get("source")
+            title = r.get("title", "Unknown Product")
+            store = r.get("source", "Unknown Store")
             link = r.get("link", "")
-            price = r.get("extracted_price") or r.get("price")
-            if not store and link:
-                try:
-                    store = link.split("/")[2].replace("www.", "")
-                except Exception:
-                    store = "Unknown Store"
+            price = r.get("extracted_price") or r.get("price", None)
 
+            # Extract domain name if available
             if link and link.startswith("http"):
                 domain = link.split("/")[2].replace("www.", "")
             else:
                 domain = "N/A"
 
             results.append({
-                "store": store or "Unknown Store",
+                "title": title,
+                "store": store,
                 "price": price,
                 "link": link,
                 "domain": domain
             })
     return results
 
-# --- AI Recommendation Function ---
+
+# --- Analyze Prices ---
 def analyze_prices(prices):
     if not prices:
         return "No price data available."
@@ -87,7 +87,8 @@ def analyze_prices(prices):
     except Exception as e:
         return f"⚠️ AI analysis unavailable ({str(e)})"
 
-# --- Main UI ---
+
+# --- UI Input ---
 product = st.text_input("Enter a product name (e.g. AirPods Pro 2):")
 
 if product:
@@ -95,49 +96,38 @@ if product:
         prices = fetch_prices(product)
 
     if prices:
-        # --- Price Results ---
-        st.markdown(
-            "<h3 style='color:#f5b400; font-weight:800;'>💰 Price Results</h3>",
-            unsafe_allow_html=True,
-        )
+        st.subheader("💰 Price Results")
 
-        for item in prices:
-            store = item.get("store", "Unknown Store")
-            price = item.get("price", "N/A")
-            link = item.get("link", "")
-            domain = item.get("domain", "N/A")
+        for p in prices:
+            store = p.get("store", "Unknown Store")
+            price = p.get("price", "N/A")
+            link = p.get("link", "")
+            domain = p.get("domain", "N/A")
+            title = p.get("title", "")
 
-            # clickable HTML link rendered safely
-            st.markdown(
-                f"""
-                <div style='background-color:#f9f9f9; border-radius:10px; padding:10px; margin:6px 0;'>
-                    <b style='font-size:18px;'>{store}</b> —
-                    <span style='color:#16a34a; font-weight:bold;'>${price}</span>
-                    {"<a href='" + link + "' target='_blank' style='text-decoration:none; color:#2563eb;'>🌐 " + domain + "</a>" if link else ""}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            # Use Streamlit markdown links — fully compatible
+            if link:
+                st.markdown(f"**{store}** — ${price}  \n[{domain}]({link})", unsafe_allow_html=False)
+            else:
+                st.markdown(f"**{store}** — ${price}  \n_No link available_")
+
+        st.markdown("---")
 
         # --- AI Recommendation ---
         analysis = analyze_prices(prices)
-        st.markdown("""
-            <div style='margin-top:25px; background-color:#f0fdf4; border-left:5px solid #22c55e;
-                        padding:15px; border-radius:10px;'>
-                <h4 style='color:#047857; margin-bottom:10px;'>🧠 AI Recommendation</h4>
-            """, unsafe_allow_html=True)
-        st.markdown(f"<p style='font-size:16px;'>{analysis}</p>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("### 🧠 AI Recommendation")
+        st.write(analysis)
 
     else:
         st.warning("No prices found. Try another product name!")
 
+
 # --- Footer ---
 st.markdown("""
-    <hr>
-    <center>
-        <p style='color:gray; font-size:13px;'>
-            Built with ❤️ by Team PricePilot — powered by Streamlit, SerpAPI, and OpenAI
-        </p>
-    </center>
+---
+<center>
+<p style='color:gray; font-size:13px;'>
+Built with ❤️ by Team PricePilot — powered by Streamlit, SerpAPI, and OpenAI
+</p>
+</center>
 """, unsafe_allow_html=True)
