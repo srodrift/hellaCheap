@@ -8,26 +8,23 @@ import pandas as pd
 # Load environment variables
 load_dotenv()
 
-# Keys
+# API Keys
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_KEY)
 
-# Page setup
+# --- Streamlit Page Setup ---
 st.set_page_config(page_title="PricePilot", page_icon="🛫", layout="centered")
 
-st.markdown(
-    """
+st.markdown("""
     <h1 style='text-align:center; font-size:42px;'>🛫 PricePilot</h1>
     <p style='text-align:center; color:gray;'>
         Compare live prices across BestBuy, Walmart, and Google Shopping — powered by AI.
     </p>
-    """,
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
 
-# --- Function: Fetch prices ---
+# --- Fetch Prices Function ---
 def fetch_prices(product):
     if not SERPAPI_KEY:
         st.error("❌ Missing SERPAPI_KEY. Please set it in Streamlit Secrets.")
@@ -49,31 +46,47 @@ def fetch_prices(product):
 
     if "shopping_results" in data:
         for r in data["shopping_results"][:5]:
+            title = r.get("title", "Unknown Product")
+            store = r.get("source", None)
             link = r.get("link", "")
-            domain = link.split("/")[2].replace("www.", "") if link else "unknown"
+            price = r.get("extracted_price", None) or r.get("price", None)
+
+            # Extract a readable store name from link if missing
+            if not store and link:
+                try:
+                    store = link.split("/")[2].replace("www.", "")
+                except Exception:
+                    store = "Unknown Store"
+
+            # Extract display domain for link
+            if link and link.startswith("http"):
+                display_link = link.split("/")[2].replace("www.", "")
+            else:
+                display_link = "N/A"
+
             results.append({
-                "store": r.get("source", domain),
-                "price": r.get("price"),
-                "link": f"https://{domain}" if domain else "N/A"
+                "store": store or "Unknown Store",
+                "price": price,
+                "link": link if link.startswith("http") else "",
+                "display_link": display_link
             })
     return results
 
-# --- Function: Analyze prices with OpenAI ---
+# --- Analyze Prices Function ---
 def analyze_prices(prices):
     if not prices:
         return "No price data available."
 
     table = "\n".join([f"{p['store']}: ${p['price']}" for p in prices])
-    summary_prompt = (
+    prompt = (
         f"Here are product prices:\n{table}\n\n"
-        "Which store offers the best deal, and why? Write the answer in 2 sentences, "
-        "friendly and clear, ending with an emoji."
+        "Which store offers the best deal and why? Keep it under 3 sentences, friendly tone, end with an emoji."
     )
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": summary_prompt}],
+            messages=[{"role": "user", "content": prompt}],
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -87,19 +100,24 @@ if product:
         prices = fetch_prices(product)
 
     if prices:
-        # --- Display Prices ---
+        # --- Price Results ---
         st.markdown(
             "<h3 style='color:#f5b400; font-weight:800;'>💰 Price Results</h3>",
             unsafe_allow_html=True,
         )
 
         for item in prices:
+            store = item.get("store", "Unknown Store")
+            price = item.get("price", "N/A")
+            link = item.get("link", "")
+            display_link = item.get("display_link", "N/A")
+
             st.markdown(
                 f"""
                 <div style='background-color:#f9f9f9; border-radius:10px; padding:10px; margin:6px 0;'>
-                    <b style='font-size:18px;'>{item['store']}</b> —
-                    <span style='color:#16a34a; font-weight:bold;'>${item['price']}</span>
-                    <a href='{item['link']}' target='_blank' style='text-decoration:none; color:#2563eb;'>🌐 {item['link'].split('//')[1]}</a>
+                    <b style='font-size:18px;'>{store}</b> —
+                    <span style='color:#16a34a; font-weight:bold;'>${price}</span>
+                    {"<a href='" + link + "' target='_blank' style='text-decoration:none; color:#2563eb;'>🌐 " + display_link + "</a>" if link else ""}
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -107,14 +125,11 @@ if product:
 
         # --- AI Recommendation ---
         analysis = analyze_prices(prices)
-        st.markdown(
-            """
+        st.markdown("""
             <div style='margin-top:25px; background-color:#f0fdf4; border-left:5px solid #22c55e;
                         padding:15px; border-radius:10px;'>
                 <h4 style='color:#047857; margin-bottom:10px;'>🧠 AI Recommendation</h4>
-            """,
-            unsafe_allow_html=True,
-        )
+            """, unsafe_allow_html=True)
         st.markdown(f"<p style='font-size:16px;'>{analysis}</p>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -122,14 +137,11 @@ if product:
         st.warning("No prices found. Try another product name!")
 
 # --- Footer ---
-st.markdown(
-    """
+st.markdown("""
     <hr>
     <center>
         <p style='color:gray; font-size:13px;'>
             Built with ❤️ by Team PricePilot — powered by Streamlit, SerpAPI, and OpenAI
         </p>
     </center>
-    """,
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
