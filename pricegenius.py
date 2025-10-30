@@ -3,12 +3,11 @@ import requests
 import streamlit as st
 from openai import OpenAI
 from dotenv import load_dotenv
-import pandas as pd
 
 # Load environment variables
 load_dotenv()
 
-# API Keys
+# Keys
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -46,33 +45,29 @@ def fetch_prices(product):
 
     if "shopping_results" in data:
         for r in data["shopping_results"][:5]:
-            title = r.get("title", "Unknown Product")
-            store = r.get("source", None)
+            store = r.get("source")
             link = r.get("link", "")
-            price = r.get("extracted_price", None) or r.get("price", None)
-
-            # Extract a readable store name from link if missing
+            price = r.get("extracted_price") or r.get("price")
             if not store and link:
                 try:
                     store = link.split("/")[2].replace("www.", "")
                 except Exception:
                     store = "Unknown Store"
 
-            # Extract display domain for link
             if link and link.startswith("http"):
-                display_link = link.split("/")[2].replace("www.", "")
+                domain = link.split("/")[2].replace("www.", "")
             else:
-                display_link = "N/A"
+                domain = "N/A"
 
             results.append({
                 "store": store or "Unknown Store",
                 "price": price,
-                "link": link if link.startswith("http") else "",
-                "display_link": display_link
+                "link": link,
+                "domain": domain
             })
     return results
 
-# --- Analyze Prices Function ---
+# --- AI Recommendation Function ---
 def analyze_prices(prices):
     if not prices:
         return "No price data available."
@@ -92,7 +87,7 @@ def analyze_prices(prices):
     except Exception as e:
         return f"⚠️ AI analysis unavailable ({str(e)})"
 
-# --- UI Input ---
+# --- Main UI ---
 product = st.text_input("Enter a product name (e.g. AirPods Pro 2):")
 
 if product:
@@ -110,14 +105,15 @@ if product:
             store = item.get("store", "Unknown Store")
             price = item.get("price", "N/A")
             link = item.get("link", "")
-            display_link = item.get("display_link", "N/A")
+            domain = item.get("domain", "N/A")
 
+            # clickable HTML link rendered safely
             st.markdown(
                 f"""
                 <div style='background-color:#f9f9f9; border-radius:10px; padding:10px; margin:6px 0;'>
                     <b style='font-size:18px;'>{store}</b> —
                     <span style='color:#16a34a; font-weight:bold;'>${price}</span>
-                    {"<a href='" + link + "' target='_blank' style='text-decoration:none; color:#2563eb;'>🌐 " + display_link + "</a>" if link else ""}
+                    {"<a href='" + link + "' target='_blank' style='text-decoration:none; color:#2563eb;'>🌐 " + domain + "</a>" if link else ""}
                 </div>
                 """,
                 unsafe_allow_html=True,
