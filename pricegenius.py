@@ -15,14 +15,13 @@ OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_KEY)
 
 # -----------------------------------
-# 🧭 Streamlit Configuration
+# 🧭 Streamlit Config
 # -----------------------------------
 st.set_page_config(page_title="🛒 HellaCheap SF", page_icon="💸", layout="centered")
-
 st.title("🛒 HellaCheap SF")
 st.caption(
     "Compare local prices across Bay Area stores — powered by SerpAPI and OpenAI 💡\n\n"
-    "Results come from public shopping listings. Some stores may repeat due to resellers, bundles, or stock differences. "
+    "Results come from public shopping listings. Some stores may repeat due to bundles or stock differences. "
     "We show only one **lowest-priced listing per store**."
 )
 
@@ -77,12 +76,18 @@ def fetch_results(search_query):
         except ValueError:
             continue
 
-        link = item.get("link") or item.get("product_link") or None
-        source = item.get("source") or item.get("merchant", {}).get("name") or "Unknown"
+        # Extract product link (prefer direct merchant URLs)
+        link = (
+            item.get("product_link")
+            or item.get("link")
+            or item.get("source")  # fallback if missing
+        )
 
-        # Simplify Google Shopping links
-        if link and "google.com" in link:
-            link = f"https://www.google.com/shopping?q={search_query.replace(' ', '+')}"
+        source = (
+            item.get("source")
+            or item.get("merchant", {}).get("name")
+            or "Unknown Store"
+        )
 
         results.append(
             {
@@ -99,31 +104,34 @@ def fetch_results(search_query):
 # 🧠 AI Summary Generator
 # -----------------------------------
 def summarize_with_ai(product_name, cheapest_item, tax_rate):
-    """Generate a friendly summary with OpenAI"""
+    """Generate clean summary with OpenAI"""
     try:
         completion = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a smart, friendly price comparison assistant for Bay Area shoppers."},
-                {"role": "user", "content": f"The cheapest {product_name} is '{cheapest_item['title']}' from {cheapest_item['source']} priced at ${cheapest_item['price']:.2f}. Bay Area tax is {tax_rate}%. Give a short, clean recommendation."},
+                {
+                    "role": "system",
+                    "content": "You are a smart, concise, friendly price comparison assistant for Bay Area shoppers.",
+                },
+                {
+                    "role": "user",
+                    "content": f"The cheapest {product_name} is '{cheapest_item['title']}' from {cheapest_item['source']} priced at ${cheapest_item['price']:.2f}. Bay Area tax is {tax_rate}%. Summarize this recommendation cleanly in one short paragraph without line breaks.",
+                },
             ],
         )
-        text = completion.choices[0].message.content.strip()
-        clean_text = " ".join(text.split())  # remove all weird breaks/newlines
-        return clean_text
+        return " ".join(completion.choices[0].message.content.strip().split())
     except Exception as e:
         return f"(AI summary unavailable: {e})"
 
 
 # -----------------------------------
-# 💰 Main App Display
+# 💰 Display Section
 # -----------------------------------
 if query:
     st.markdown(f"### 💰 {city} Prices (including tax)")
     st.caption(f"Tax rate applied: {tax_rate}%")
 
     results = fetch_results(query)
-
     if not results:
         st.warning("No results found. Try another search.")
     else:
@@ -136,18 +144,18 @@ if query:
             st.write(f"**{row['source']}** — ${row['price']:.2f}")
             st.write(f"💵 Total after tax: **${total:.2f}**")
 
-            # Maps link (shortened)
-            maps_url = f"https://maps.google.com/?q={row['source'].replace(' ', '+')}+{city.replace(' ', '+')}"
+            # Accurate Google Maps link
+            maps_url = f"https://www.google.com/maps/search/{row['source'].replace(' ', '+')}+store+near+{city.replace(' ', '+')}"
             st.markdown(f"[📍 Find on Maps]({maps_url})")
 
-            if row["link"]:
+            if row["link"] and not row["link"].startswith("https://www.google.com/shopping"):
                 st.markdown(f"[🔗 View Product]({row['link']})")
             else:
                 st.caption("No product link available")
 
             st.divider()
 
-        # AI summary
+        # 🧠 AI summary
         cheapest = df.iloc[0].to_dict()
         ai_summary = summarize_with_ai(query, cheapest, tax_rate)
         st.markdown(f"### 🧠 AI Recommendation\n\n{ai_summary}")
