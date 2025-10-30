@@ -192,5 +192,10 @@ if st.button("Search"):
 # ----------------------------
 # FOOTER
 # ----------------------------
-st.markdown("---")
-st.caption("Built with ❤️ in the Bay by hellaCheap — powered by Streamlit, SerpAPI & local love 🌉")
+st.markdown("""
+---
+<div style='text-align: center; font-size: 15px; color: goldenrod;'>
+🌉 Built with ❤️ in <b>San Francisco</b> — <i>by hellaCheap</i><br>
+Powered by Streamlit & SerpAPI
+</div>
+""", unsafe_allow_html=True)
